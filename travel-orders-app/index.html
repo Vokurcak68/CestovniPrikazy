@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cestovní příkazy</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div class="brand-lockup">
+            <img class="client-logo" src="./assets/oresi-logo.png" alt="Oresi United Kitchens" />
+            <div class="app-title">
+              <p class="eyebrow">Autonomní agenda</p>
+              <h1>Cestovní příkazy</h1>
+            </div>
+            <div class="maker-badge" title="Tvůrce aplikace Zynaptec">
+              <span>vytvořil</span>
+              <img src="./assets/zynaptec-logo.png" alt="Zynaptec" />
+            </div>
+          </div>
+          <nav class="top-actions" aria-label="Hlavní akce">
+            <button id="ordersModeBtn" class="icon-text-btn mode-btn active" type="button" title="Cestovní příkazy">
+              <span aria-hidden="true">□</span>
+              <span>Příkazy</span>
+            </button>
+            <button id="approvalsModeBtn" class="icon-text-btn mode-btn" type="button" title="Schvalování" hidden>
+              <span aria-hidden="true">✓</span>
+              <span>Schvalování</span>
+              <span id="approvalBadge" class="nav-badge" hidden>0</span>
+            </button>
+            <button id="profileModeBtn" class="icon-text-btn mode-btn" type="button" title="Můj profil" hidden>
+              <span aria-hidden="true">◎</span>
+              <span>Můj profil</span>
+            </button>
+            <button id="adminModeBtn" class="icon-text-btn mode-btn" type="button" title="Správa uživatelů" hidden>
+              <span aria-hidden="true">⚙</span>
+              <span>Uživatelé</span>
+            </button>
+            <button id="newOrderBtn" class="primary-btn" type="button" title="Nový cestovní příkaz">
+              <span aria-hidden="true">+</span>
+              <span>Nový příkaz</span>
+            </button>
+            <button id="printBtn" class="icon-text-btn" type="button" title="Tisk nebo uložení do PDF">
+              <span aria-hidden="true">⎙</span>
+              <span>Tisk / PDF</span>
+            </button>
+            <button id="exportBtn" class="icon-text-btn" type="button" title="Export lokální zálohy JSON">
+              <span aria-hidden="true">⇩</span>
+              <span>Export</span>
+            </button>
+            <span id="userInfo" class="user-info" hidden></span>
+            <button id="logoutBtn" class="icon-text-btn" type="button" title="Odhlásit" hidden>
+              <span aria-hidden="true">↪</span>
+              <span>Odhlásit</span>
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar" aria-label="Seznam cestovních příkazů">
+          <div class="filters">
+            <label>
+              <span>Hledat</span>
+              <input id="searchInput" type="search" placeholder="Jméno, účel, číslo" autocomplete="off" />
+            </label>
+            <label>
+              <span>Stav</span>
+              <select id="statusFilter">
+                <option value="all">Všechny stavy</option>
+              </select>
+            </label>
+          </div>
+          <div id="ordersList" class="orders-list"></div>
+        </aside>
+
+        <section class="main-panel" aria-label="Detail cestovního příkazu">
+          <div id="emptyState" class="empty-state" hidden>
+            <h2>Žádný cestovní příkaz</h2>
+            <p>Začněte novým cestovním příkazem.</p>
+          </div>
+          <form id="orderForm" class="order-form" autocomplete="off"></form>
+          <div id="printSheet" class="print-sheet"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

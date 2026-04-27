@@ -1,0 +1,25 @@
+# Runtime and local machine state
+.env
+.env.*
+*.log
+__pycache__/
+*.py[cod]
+
+# Local uploads and generated attachments
+travel-order-attachments/
+
+# Verification screenshots generated during UI work
+*.png
+!travel-orders-app/assets/oresi-logo.png
+!travel-orders-app/assets/zynaptec-logo.png
+
+# Temporary files created while extracting/verifying brand assets
+travel-orders-app/assets/oresi-source.pdf
+travel-orders-app/assets/oresi-source-page1-preview.png
+travel-orders-app/assets/pdf-image-*.tif
+travel-orders-app/assets/pdf-image-*.jpg
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
