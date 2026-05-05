@@ -3,7 +3,9 @@ const STORAGE_KEY = "travelOrders.cz.autonomous.v1";
 const STATUS_OPTIONS = [
   { value: "draft", label: "Rozpracováno" },
   { value: "submitted", label: "Ke schválení" },
+  { value: "returned", label: "Vráceno k doplnění" },
   { value: "approved", label: "Schváleno" },
+  { value: "imported", label: "Naimportováno" },
   { value: "settlement", label: "Vyúčtování" },
   { value: "closed", label: "Uzavřeno" },
   { value: "rejected", label: "Zamítnuto" },
@@ -14,6 +16,12 @@ const TRANSPORT_OPTIONS = {
   company_car: "Služební vozidlo",
   public_transport: "Veřejná doprava",
   other: "Jiné",
+};
+
+const SEGMENT_TYPE_OPTIONS = {
+  private: "Soukromý",
+  domestic: "Tuzemský",
+  foreign: "Zahraniční",
 };
 
 const FUEL_OPTIONS = {
@@ -43,6 +51,14 @@ const EXPENSE_KIND_OPTIONS = {
   parking: "Parkovné",
   meal: "Stravování",
   other: "Ostatní výdaj",
+};
+
+const CURRENCY_OPTIONS = {
+  CZK: "CZK",
+  EUR: "EUR",
+  USD: "USD",
+  GBP: "GBP",
+  PLN: "PLN",
 };
 
 const DEFAULT_RATES = {
@@ -113,6 +129,14 @@ let rateMonitorState = {
   monitor: null,
   rate: null,
 };
+let foreignTravelState = {
+  loaded: false,
+  date: "",
+  countries: [],
+  expenseCodes: [],
+  currencies: ["CZK"],
+  message: "",
+};
 
 const els = {
   form: document.getElementById("orderForm"),
@@ -155,6 +179,8 @@ async function init() {
 async function startApp() {
   await ensureCurrentDefaults();
   await loadLegislationRates();
+  await loadForeignTravelReference(todayString());
+  await refreshOwnedOrderStatuses();
 
   const ownershipChanged = claimLegacyOrdersForCurrentUser();
   const accessibleOrders = visibleOrders();
@@ -229,6 +255,11 @@ async function startApp() {
     els.form.addEventListener("input", handleFormInput);
     els.form.addEventListener("change", handleFormInput);
     els.form.addEventListener("click", handleFormClick);
+    window.addEventListener("focus", refreshOwnedOrdersAndRender);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) refreshOwnedOrdersAndRender();
+    });
+    window.setInterval(refreshOwnedOrdersAndRender, 30000);
     appStarted = true;
   }
 
@@ -280,8 +311,49 @@ function can(role) {
   return Boolean(currentUser?.roles?.includes(role));
 }
 
+function canAccessMode(mode) {
+  if (mode === "admin") return can("admin");
+  if (mode === "approvals") return can("approver") || can("admin") || can("accountant");
+  if (mode === "profile") return API_ENABLED && Boolean(currentUser);
+  return true;
+}
+
+function enforceAppModeAccess() {
+  if (!canAccessMode(appMode)) appMode = "orders";
+}
+
+function resetSessionScopedState() {
+  adminState = {
+    users: [],
+    options: { roles: [], approvers: [] },
+    selectedUserId: null,
+    loaded: false,
+    message: "",
+  };
+  approvalState = {
+    summary: { pending_count: 0, overdue_count: 0, pending_gross_amount: 0 },
+    orders: [],
+    detail: null,
+    selectedApprovalId: null,
+    notifications: { badge: { unread_count: 0, failed_count: 0 }, items: [] },
+    loaded: false,
+    message: "",
+  };
+  profileState = { data: null, loaded: false, message: "" };
+}
+
 function currentUserId() {
   return currentUser?.user_id || currentUser?.id || "";
+}
+
+function orderApproverOptions() {
+  const ownId = currentUserId();
+  return (currentDefaults?.approvers || []).filter((approver) => approver.id && approver.id !== ownId);
+}
+
+function defaultOrderApprover() {
+  const approvers = orderApproverOptions();
+  return approvers.find((approver) => approver.is_default) || approvers[0] || null;
 }
 
 function currentUserLabels() {
@@ -338,11 +410,10 @@ function claimLegacyOrdersForCurrentUser() {
 }
 
 async function setMode(mode) {
-  if (mode === "admin" && !can("admin")) return;
-  if (mode === "approvals" && !(can("approver") || can("admin") || can("accountant"))) return;
-  if (mode === "profile" && (!API_ENABLED || !currentUser)) return;
+  if (!canAccessMode(mode)) return;
 
   appMode = mode;
+  if (mode === "orders") await refreshOwnedOrderStatuses();
   if (mode === "admin") await loadAdminData();
   if (mode === "approvals") await loadApprovalData();
   if (mode === "profile") await loadProfileData();
@@ -362,6 +433,7 @@ async function restoreSession() {
     }
     const payload = await response.json();
     currentUser = payload.user;
+    enforceAppModeAccess();
     return true;
   } catch {
     return false;
@@ -448,7 +520,54 @@ async function refreshRateMonitor() {
   }
 }
 
-function showLogin(error = "") {
+async function loadForeignTravelReference(date = todayString()) {
+  if (!API_ENABLED || !currentUser) return;
+  const targetDate = normalizeDateOnly(date) || todayString();
+  if (foreignTravelState.loaded && foreignTravelState.date === targetDate) return;
+
+  try {
+    const response = await apiFetch(`/api/foreign-travel/reference?date=${encodeURIComponent(targetDate)}`);
+    if (!response.ok) throw new Error("foreign_reference_failed");
+    const payload = await response.json();
+    foreignTravelState = {
+      loaded: true,
+      date: targetDate,
+      countries: Array.isArray(payload.countries) ? payload.countries : [],
+      expenseCodes: Array.isArray(payload.expenseCodes) ? payload.expenseCodes : [],
+      currencies: Array.isArray(payload.currencies) ? payload.currencies : ["CZK"],
+      message: "",
+    };
+  } catch {
+    foreignTravelState = {
+      ...foreignTravelState,
+      loaded: false,
+      date: targetDate,
+      message: "Číselníky pro zahraniční cesty se nepodařilo načíst z Heliosu.",
+    };
+  }
+}
+
+async function refreshForeignTravelReferenceForOrder(order) {
+  await loadForeignTravelReference(normalizeDateOnly(order?.trip?.startAt) || todayString());
+}
+
+async function fetchExchangeRate(currencyCode, date) {
+  const currency = normalizeCurrencyCode(currencyCode);
+  const targetDate = normalizeDateOnly(date) || todayString();
+  if (!API_ENABLED || !currentUser || currency === "CZK") {
+    return { currencyCode: currency, exchangeRate: 1, exchangeRateDate: targetDate };
+  }
+
+  try {
+    const response = await apiFetch(`/api/foreign-travel/exchange-rate?currency=${encodeURIComponent(currency)}&date=${encodeURIComponent(targetDate)}`);
+    if (!response.ok) throw new Error("exchange_rate_failed");
+    return response.json();
+  } catch {
+    return { currencyCode: currency, exchangeRate: 1, exchangeRateDate: targetDate };
+  }
+}
+
+function showLogin(error = "", message = "") {
   document.body.classList.add("login-mode");
   els.form.innerHTML = "";
   els.list.innerHTML = "";
@@ -475,12 +594,57 @@ function showLogin(error = "") {
         <span>Heslo</span>
         <input name="password" type="password" autocomplete="current-password" required />
       </label>
+      <p class="inline-message" ${message ? "" : "hidden"}>${escapeHtml(message)}</p>
       <p class="login-error" ${error ? "" : "hidden"}>${escapeHtml(error)}</p>
       <button class="primary-btn" type="submit">Přihlásit</button>
+      <button class="secondary-btn" type="button" data-auth-register>Vytvořit účet</button>
     </form>
   `;
   document.body.append(overlay);
   overlay.querySelector("form").addEventListener("submit", handleLogin);
+  overlay.querySelector("[data-auth-register]").addEventListener("click", () => showRegister());
+}
+
+function showRegister(error = "", message = "") {
+  document.body.classList.add("login-mode");
+  els.form.innerHTML = "";
+  els.list.innerHTML = "";
+  els.empty.hidden = true;
+  updateUserChrome();
+
+  const existing = document.getElementById("loginOverlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "loginOverlay";
+  overlay.className = "login-overlay";
+  overlay.innerHTML = `
+    <form class="login-panel" autocomplete="on">
+      <div>
+        <p class="eyebrow">Nový přístup</p>
+        <h2>Registrace</h2>
+      </div>
+      <label>
+        <span>Jméno</span>
+        <input name="display_name" type="text" autocomplete="name" required />
+      </label>
+      <label>
+        <span>E-mail</span>
+        <input name="email" type="email" autocomplete="email" required />
+      </label>
+      <label>
+        <span>Heslo</span>
+        <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+      </label>
+      <p class="inline-message" ${message ? "" : "hidden"}>${escapeHtml(message)}</p>
+      <p class="login-error" ${error ? "" : "hidden"}>${escapeHtml(error)}</p>
+      <button class="primary-btn" type="submit">Registrovat</button>
+      <button class="secondary-btn" type="button" data-auth-login>Zpět na přihlášení</button>
+    </form>
+  `;
+  document.body.append(overlay);
+  overlay.querySelector("form").addEventListener("submit", handleRegister);
+  overlay.querySelector("[data-auth-login]").addEventListener("click", () => showLogin());
 }
 
 async function handleLogin(event) {
@@ -511,6 +675,8 @@ async function handleLogin(event) {
     loginAccepted = true;
     localStorage.setItem(AUTH_TOKEN_KEY, payload.token);
     currentUser = payload.user;
+    resetSessionScopedState();
+    appMode = "orders";
     defaultsLoaded = false;
     await startApp();
     document.getElementById("loginOverlay")?.remove();
@@ -523,6 +689,8 @@ async function handleLogin(event) {
       currentUser = null;
       currentDefaults = null;
       defaultsLoaded = false;
+      appMode = "orders";
+      resetSessionScopedState();
       updateUserChrome();
       errorBox.textContent = "Přihlášení proběhlo, ale aplikaci se nepodařilo načíst. Zkus stránku obnovit.";
     } else {
@@ -534,6 +702,53 @@ async function handleLogin(event) {
   }
 }
 
+async function handleRegister(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  const errorBox = form.querySelector(".login-error");
+  const messageBox = form.querySelector(".inline-message");
+  button.disabled = true;
+  errorBox.hidden = true;
+  messageBox.hidden = true;
+
+  const data = new FormData(form);
+  try {
+    const response = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        display_name: data.get("display_name"),
+        email: data.get("email"),
+        password: data.get("password"),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(registerErrorMessage(payload.error));
+    }
+
+    const message = payload.emailSent
+      ? "Registrace je založená. Zkontroluj e-mail a potvrď účet ověřovacím odkazem."
+      : `Registrace je založená. Pro lokální test otevři ověřovací odkaz: ${payload.devVerificationUrl || ""}`;
+    showLogin("", message);
+  } catch (error) {
+    errorBox.textContent = error.message || "Registrace se nepodařila.";
+    errorBox.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function registerErrorMessage(code) {
+  if (code === "invalid_email") return "Zadej platný e-mail.";
+  if (code === "weak_password") return "Heslo musí mít alespoň 8 znaků.";
+  if (code === "missing_display_name") return "Zadej jméno.";
+  if (code === "account_exists" || code === "email_exists") return "Účet s tímto e-mailem už v databázi cestovních příkazů existuje.";
+  return "Registrace se nepodařila.";
+}
+
 function handleStartupFailure(error) {
   console.error(error);
   if (API_ENABLED) {
@@ -541,6 +756,8 @@ function handleStartupFailure(error) {
     currentUser = null;
     currentDefaults = null;
     defaultsLoaded = false;
+    appMode = "orders";
+    resetSessionScopedState();
     showLogin("Aplikaci se nepodařilo načíst. Zkus se prosím přihlásit znovu.");
   }
 }
@@ -561,7 +778,8 @@ async function logout() {
   currentUser = null;
   currentDefaults = null;
   defaultsLoaded = false;
-  profileState = { data: null, loaded: false, message: "" };
+  appMode = "orders";
+  resetSessionScopedState();
   showLogin();
 }
 
@@ -584,6 +802,7 @@ function updateUserChrome() {
 }
 
 function render() {
+  enforceAppModeAccess();
   updateUserChrome();
   updateModeButtons();
 
@@ -607,6 +826,7 @@ function render() {
 }
 
 function updateModeButtons() {
+  enforceAppModeAccess();
   [els.ordersMode, els.approvalsMode, els.profileMode, els.adminMode].forEach((button) => button?.classList.remove("active"));
   if (appMode === "orders") els.ordersMode?.classList.add("active");
   if (appMode === "approvals") els.approvalsMode?.classList.add("active");
@@ -634,6 +854,11 @@ async function loadAdminData() {
 }
 
 function renderAdmin() {
+  if (!can("admin")) {
+    appMode = "orders";
+    render();
+    return;
+  }
   els.empty.hidden = true;
   els.form.hidden = false;
   els.list.innerHTML = adminSidebar();
@@ -746,7 +971,7 @@ function adminUserSection(user) {
       </div>
       <div class="section-body form-grid">
         ${adminField("Organizace", "organization_name", user.organization_name || "")}
-        ${adminField("Osobní číslo", "personal_number", user.personal_number || user.login_name || "")}
+        ${adminField("Osobní číslo", "personal_number", user.personal_number || "")}
         ${adminField("Středisko - kód", "cost_center_code", user.cost_center_code || "")}
         ${adminField("Středisko - název", "cost_center_name", user.cost_center_name || "")}
         ${adminField("Útvar", "department_name", user.department_name || "")}
@@ -784,7 +1009,7 @@ function adminUserSection(user) {
 function adminApproverOptions(user) {
   const selected = new Map((user.approver_options || []).map((approver) => [approver.id, approver]));
   const fallbackDefaultId = user.default_approver_user_id || "";
-  const options = (adminState.options.approvers || []).map((approver) => {
+  const options = (adminState.options.approvers || []).filter((approver) => approver.id !== user.id).map((approver) => {
     const current = selected.get(approver.id);
     return {
       ...approver,
@@ -825,6 +1050,11 @@ function adminVehicleList(user) {
       secondary_fuel_type: vehicle.secondary_fuel_type || vehicle.secondaryFuelType || "",
       secondary_consumption: vehicle.secondary_consumption ?? vehicle.secondaryConsumption ?? "",
       is_default: Boolean(vehicle.is_default || vehicle.isDefault),
+      helios_id: vehicle.helios_id || vehicle.heliosId || "",
+      source_system: vehicle.source_system || vehicle.sourceSystem || "local",
+      helios_export_status: vehicle.helios_export_status || vehicle.heliosExportStatus || "not_ready",
+      helios_export_error: vehicle.helios_export_error || vehicle.heliosExportError || "",
+      documents: vehicleDocumentsList(vehicle),
     }));
     if (!normalized.some((vehicle) => vehicle.is_default)) normalized[0].is_default = true;
     return normalized;
@@ -841,6 +1071,11 @@ function adminVehicleList(user) {
       secondary_fuel_type: user.vehicle_secondary_fuel_type || "",
       secondary_consumption: user.vehicle_secondary_consumption || "",
       is_default: true,
+      helios_id: user.vehicle_helios_id || "",
+      source_system: user.vehicle_source_system || "local",
+      helios_export_status: user.vehicle_helios_export_status || "not_ready",
+      helios_export_error: "",
+      documents: [],
     }];
   }
 
@@ -858,6 +1093,12 @@ function createEmptyAdminVehicle(isDefault = false) {
     secondary_fuel_type: "",
     secondary_consumption: "",
     is_default: isDefault,
+    helios_id: "",
+    source_system: "local",
+    helios_export_status: "not_ready",
+    helios_export_error: "",
+    client_id: newId(),
+    documents: [],
   };
 }
 
@@ -869,6 +1110,7 @@ function adminVehicleCard(vehicle, index) {
           <input data-admin-vehicle-default name="adminDefaultVehicle" type="radio" ${vehicle.is_default ? "checked" : ""} />
           <span>Výchozí vozidlo</span>
         </label>
+        ${vehicleErpBadge(vehicle)}
         <button type="button" class="table-icon-btn" data-admin-remove-vehicle title="Odebrat vozidlo" aria-label="Odebrat vozidlo">×</button>
       </div>
       <div class="form-grid">
@@ -880,6 +1122,59 @@ function adminVehicleCard(vehicle, index) {
         ${adminVehicleField("Spotřeba na 100 km", "consumption", vehicle.consumption || "", "number", "0.01")}
         ${adminVehicleOptionalFuelSelect("Druhá energie", "secondary_fuel_type", vehicle.secondary_fuel_type || "", adminState.options.fuelTypes || fuelAdminOptions())}
         ${adminVehicleField("Spotřeba druhé energie na 100 km", "secondary_consumption", vehicle.secondary_consumption || "", "number", "0.01")}
+      </div>
+      <div class="vehicle-documents">
+        <input type="hidden" data-admin-vehicle-field="client_id" value="${escapeHtml(vehicle.client_id || vehicle.clientId || newId())}" />
+        <div class="vehicle-documents-head">
+          <span>Příloha OTP</span>
+          <label class="secondary-btn file-action">
+            Přidat fotku/soubor
+            <input data-vehicle-document-file type="file" accept="image/*,.pdf" hidden />
+          </label>
+        </div>
+        <div class="vehicle-document-list" data-vehicle-documents-list>
+          ${vehicleDocumentsList(vehicle).map(vehicleDocumentCard).join("") || `<p class="note">Není přiložené OTP.</p>`}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function vehicleDocumentsList(vehicle) {
+  const documents = vehicle?.documents || vehicle?.vehicleDocuments || [];
+  return Array.isArray(documents) ? documents.map((document) => ({
+    id: document.id || "",
+    clientDocumentId: document.clientDocumentId || document.client_document_id || document.clientId || document.id || newId(),
+    documentKind: document.documentKind || document.document_kind || "otp",
+    fileName: document.fileName || document.file_name || document.name || "OTP",
+    contentType: document.contentType || document.content_type || "",
+    byteSize: document.byteSize ?? document.byte_size ?? 0,
+    dataUrl: document.dataUrl || document.data_url || "",
+  })) : [];
+}
+
+function vehicleDocumentCard(document) {
+  const open = document.dataUrl
+    ? `<a class="secondary-btn" href="${escapeHtml(document.dataUrl)}" download="${escapeHtml(document.fileName || "OTP")}">Otevřít</a>`
+    : document.id
+      ? `<button type="button" class="secondary-btn" data-download-vehicle-document>Otevřít</button>`
+      : `<span class="status-pill status-approved">Uloženo</span>`;
+  return `
+    <article class="vehicle-document" data-vehicle-document>
+      <input type="hidden" data-vehicle-document-field="id" value="${escapeHtml(document.id || "")}" />
+      <input type="hidden" data-vehicle-document-field="clientDocumentId" value="${escapeHtml(document.clientDocumentId || document.id || newId())}" />
+      <input type="hidden" data-vehicle-document-field="documentKind" value="${escapeHtml(document.documentKind || "otp")}" />
+      <input type="hidden" data-vehicle-document-field="fileName" value="${escapeHtml(document.fileName || "OTP")}" />
+      <input type="hidden" data-vehicle-document-field="contentType" value="${escapeHtml(document.contentType || "")}" />
+      <input type="hidden" data-vehicle-document-field="byteSize" value="${escapeHtml(document.byteSize || 0)}" />
+      <input type="hidden" data-vehicle-document-field="dataUrl" value="${escapeHtml(document.dataUrl || "")}" />
+      <div>
+        <strong>${escapeHtml(document.fileName || "OTP")}</strong>
+        <small>${escapeHtml(formatBytes(Number(document.byteSize || 0)))}</small>
+      </div>
+      <div class="vehicle-document-actions">
+        ${open}
+        <button type="button" class="table-icon-btn" data-remove-vehicle-document title="Odebrat přílohu OTP" aria-label="Odebrat přílohu OTP">×</button>
       </div>
     </article>
   `;
@@ -976,7 +1271,7 @@ function adminSyncSection() {
         </div>
         <div>
           <strong>Později</strong>
-          <p class="note">Synchronizace z Heliosu bude plnit osobní číslo, středisko, manažera, výchozího schvalovatele a aktivitu účtu.</p>
+          <p class="note">Synchronizace z Heliosu plní osobní údaje, středisko, vozidla a příznak schvalovatele.</p>
         </div>
       </div>
     </section>
@@ -1005,7 +1300,8 @@ async function saveAdminUserFromForm() {
   });
 
   if (!response.ok) {
-    adminState.message = "Uložení uživatele se nepodařilo.";
+    const error = await response.json().catch(() => ({}));
+    adminState.message = adminSaveErrorMessage(error.error);
     renderAdmin();
     return;
   }
@@ -1022,6 +1318,15 @@ async function saveAdminUserFromForm() {
   renderAdmin();
 }
 
+function adminSaveErrorMessage(code) {
+  if (code === "invalid_email") return "Zadej platný e-mail.";
+  if (code === "email_exists") return "Uživatel s tímto e-mailem už v databázi cestovních příkazů existuje.";
+  if (code === "login_exists") return "Uživatel s tímto přihlašovacím jménem už existuje.";
+  if (code === "personal_number_exists") return "Toto osobní číslo už je zadané u jiného uživatele v databázi cestovních příkazů.";
+  if (code === "missing_required_fields") return "Vyplň přihlašovací jméno a jméno uživatele.";
+  return "Uložení uživatele se nepodařilo.";
+}
+
 function collectAdminVehiclesFromForm() {
   return Array.from(els.form.querySelectorAll("[data-admin-vehicle]")).map((card) => {
     const vehicle = {};
@@ -1029,10 +1334,21 @@ function collectAdminVehiclesFromForm() {
       vehicle[field.dataset.adminVehicleField] = field.value.trim();
     });
     vehicle.is_default = Boolean(card.querySelector("[data-admin-vehicle-default]")?.checked);
+    vehicle.documents = collectVehicleDocumentsFromCard(card);
     return vehicle;
   }).filter((vehicle) => {
-    return vehicle.brand || vehicle.plate || vehicle.engine_volume || Number(vehicle.consumption || 0) > 0;
+    return vehicle.brand || vehicle.plate || vehicle.engine_volume || Number(vehicle.consumption || 0) > 0 || (vehicle.documents || []).length;
   });
+}
+
+function collectVehicleDocumentsFromCard(card) {
+  return Array.from(card.querySelectorAll("[data-vehicle-document]")).map((documentCard) => {
+    const document = {};
+    documentCard.querySelectorAll("[data-vehicle-document-field]").forEach((field) => {
+      document[field.dataset.vehicleDocumentField] = field.value;
+    });
+    return document;
+  }).filter((document) => document.id || document.dataUrl || document.fileName);
 }
 
 function collectAdminApproversFromForm() {
@@ -1052,12 +1368,20 @@ function addAdminVehicleCard() {
   list.insertAdjacentHTML("beforeend", adminVehicleCard(createEmptyAdminVehicle(!hasVehicle), list.children.length));
 }
 
-function removeAdminVehicleCard(button) {
+async function removeAdminVehicleCard(button) {
   const card = button.closest("[data-admin-vehicle]");
   const list = card?.closest("[data-admin-vehicles]");
   if (!card || !list) return;
 
   const wasDefault = Boolean(card.querySelector("[data-admin-vehicle-default]")?.checked);
+  if (adminVehicleCardNeedsDeleteConfirmation(card)) {
+    const label = adminVehicleCardDeleteLabel(card);
+    const message = wasDefault
+      ? `Opravdu odebrat výchozí vozidlo ${label}? Po odebrání se jako výchozí nastaví jiné vozidlo.`
+      : `Opravdu odebrat vozidlo ${label}?`;
+    if (!window.confirm(message)) return;
+  }
+
   card.remove();
   const remaining = list.querySelectorAll("[data-admin-vehicle]");
   if (!remaining.length) {
@@ -1067,6 +1391,112 @@ function removeAdminVehicleCard(button) {
   if (wasDefault) {
     remaining[0].querySelector("[data-admin-vehicle-default]").checked = true;
   }
+
+  if (appMode === "profile") {
+    profileState.message = "Ukládám odebrání vozidla...";
+    await saveProfileFromForm("Vozidlo bylo odebráno a profil uložen.");
+  } else if (appMode === "admin") {
+    showTransientFormMessage("Vozidlo je odebrané z formuláře. Pro trvalé odstranění ulož uživatele.");
+  }
+}
+
+async function addVehicleDocumentFiles(input) {
+  const card = input.closest("[data-admin-vehicle]");
+  const list = card?.querySelector("[data-vehicle-documents-list]");
+  if (!card || !list || !input.files?.length) return;
+
+  list.querySelector(".note")?.remove();
+  for (const file of Array.from(input.files)) {
+    if (file.size > 10 * 1024 * 1024) {
+      showTransientFormMessage("Příloha OTP je moc velká. Maximum je 10 MB.");
+      continue;
+    }
+    const dataUrl = await fileToDataUrl(file);
+    list.insertAdjacentHTML("beforeend", vehicleDocumentCard({
+      id: "",
+      clientDocumentId: newId(),
+      documentKind: "otp",
+      fileName: file.name,
+      contentType: file.type || "application/octet-stream",
+      byteSize: file.size,
+      dataUrl,
+    }));
+  }
+}
+
+async function removeVehicleDocumentCard(button) {
+  const documentCard = button.closest("[data-vehicle-document]");
+  const list = documentCard?.closest("[data-vehicle-documents-list]");
+  if (!documentCard || !list) return;
+
+  const fileName = documentCard.querySelector('[data-vehicle-document-field="fileName"]')?.value || "OTP";
+  if (!window.confirm(`Opravdu odebrat přílohu ${fileName}?`)) return;
+  documentCard.remove();
+  if (!list.querySelector("[data-vehicle-document]")) {
+    list.innerHTML = `<p class="note">Není přiložené OTP.</p>`;
+  }
+
+  if (appMode === "profile") {
+    profileState.message = "Ukládám odebrání přílohy OTP...";
+    await saveProfileFromForm("Příloha OTP byla odebrána a profil uložen.");
+  } else if (appMode === "admin") {
+    showTransientFormMessage("Příloha OTP je odebraná z formuláře. Pro trvalé odstranění ulož uživatele.");
+  }
+}
+
+async function downloadVehicleDocument(button) {
+  const documentCard = button.closest("[data-vehicle-document]");
+  const vehicleCard = button.closest("[data-admin-vehicle]");
+  const vehicleId = vehicleCard?.querySelector('[data-admin-vehicle-field="id"]')?.value || "";
+  const documentId = documentCard?.querySelector('[data-vehicle-document-field="id"]')?.value || "";
+  const fileName = documentCard?.querySelector('[data-vehicle-document-field="fileName"]')?.value || "OTP";
+  if (!vehicleId || !documentId) return;
+
+  const response = await fetch(`/api/vehicles/${encodeURIComponent(vehicleId)}/documents/${encodeURIComponent(documentId)}`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem(AUTH_TOKEN_KEY) || ""}` },
+  });
+  if (!response.ok) {
+    showTransientFormMessage("Přílohu OTP se nepodařilo otevřít.");
+    return;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.target = "_blank";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function adminVehicleCardNeedsDeleteConfirmation(card) {
+  const hasPersistedId = Boolean(card.querySelector('[data-admin-vehicle-field="id"]')?.value.trim());
+  const hasVehicleData = Array.from(card.querySelectorAll("[data-admin-vehicle-field]")).some((field) => {
+    if (field.dataset.adminVehicleField === "id") return false;
+    return Boolean(field.value.trim());
+  });
+  return hasPersistedId || hasVehicleData;
+}
+
+function adminVehicleCardDeleteLabel(card) {
+  const brand = card.querySelector('[data-admin-vehicle-field="brand"]')?.value.trim() || "";
+  const plate = card.querySelector('[data-admin-vehicle-field="plate"]')?.value.trim() || "";
+  return [brand, plate].filter(Boolean).join(" / ") || "bez popisu";
+}
+
+function showTransientFormMessage(message) {
+  let element = els.form.querySelector("[data-transient-message]");
+  if (!element) {
+    element = document.createElement("p");
+    element.className = "inline-message";
+    element.dataset.transientMessage = "true";
+    const header = els.form.querySelector(".form-header");
+    header?.insertAdjacentElement("afterend", element);
+  }
+  element.textContent = message;
+  element.hidden = false;
 }
 
 async function loadProfileData(force = false) {
@@ -1112,7 +1542,7 @@ function renderProfile() {
           ${profileField("Jméno", "display_name", profile.display_name || "")}
           ${profileField("E-mail", "email", profile.email || "", "email")}
           ${profileField("Organizace", "organization_name", profile.organization_name || "")}
-          ${profileField("Osobní číslo", "personal_number", profile.personal_number || "")}
+          ${profilePersonalNumberField(profile)}
           ${profileField("Středisko - kód", "cost_center_code", profile.cost_center_code || "")}
           ${profileField("Středisko - název", "cost_center_name", profile.cost_center_name || "")}
           ${profileField("Útvar", "department_name", profile.department_name || "")}
@@ -1183,6 +1613,11 @@ function profileFromDefaults() {
     secondary_fuel_type: vehicle.secondaryFuelType || "",
     secondary_consumption: vehicle.secondaryConsumption || "",
     is_default: Boolean(vehicle.is_default),
+    helios_id: vehicle.heliosId || "",
+    source_system: vehicle.sourceSystem || "local",
+    helios_export_status: vehicle.heliosExportStatus || "not_ready",
+    helios_export_error: vehicle.heliosExportError || "",
+    documents: vehicle.documents || [],
   }));
 
   return {
@@ -1198,15 +1633,19 @@ function profileFromDefaults() {
     cost_center_name: employee.costCenterName || "",
     department_name: employee.department || "",
     default_transport_kind: currentDefaults?.route?.transport || "private_car",
-    default_approver_user_id: currentDefaults?.approver?.id || "",
-    approver_options: currentDefaults?.approvers || [],
+    default_approver_user_id: defaultOrderApprover()?.id || "",
+    approver_options: orderApproverOptions(),
     vehicles: vehicles.length ? vehicles : [createEmptyAdminVehicle(true)],
   };
 }
 
 function profileApproverSelect(profile) {
-  const approvers = profile.approver_options || currentDefaults?.approvers || [];
-  const selectedId = profile.default_approver_user_id || currentDefaults?.approver?.id || approvers.find((approver) => approver.is_default)?.id || "";
+  const rawApprovers = profile.approver_options?.length ? profile.approver_options : orderApproverOptions();
+  const approvers = rawApprovers.filter((approver) => approver.id !== currentUserId());
+  const fallback = approvers.find((approver) => approver.is_default) || approvers[0] || {};
+  const selectedId = approvers.some((approver) => approver.id === profile.default_approver_user_id)
+    ? profile.default_approver_user_id
+    : fallback.id || "";
   if (!approvers.length) {
     return `
       <div class="wide">
@@ -1230,8 +1669,9 @@ function profileApproverSelect(profile) {
 }
 
 function selectedProfileApprover(profile) {
-  const approvers = profile.approver_options || currentDefaults?.approvers || [];
-  const selectedId = profile.default_approver_user_id || currentDefaults?.approver?.id || "";
+  const rawApprovers = profile.approver_options?.length ? profile.approver_options : orderApproverOptions();
+  const approvers = rawApprovers.filter((approver) => approver.id !== currentUserId());
+  const selectedId = profile.default_approver_user_id || "";
   return approvers.find((approver) => approver.id === selectedId) || approvers.find((approver) => approver.is_default);
 }
 
@@ -1244,7 +1684,19 @@ function profileField(label, field, value, type = "text", className = "") {
   `;
 }
 
-async function saveProfileFromForm() {
+function profilePersonalNumberField(profile) {
+  return `
+    <label>
+      <span>Osobní číslo</span>
+      <div class="input-action-row">
+        <input data-profile-field="personal_number" type="text" value="${escapeHtml(profile.personal_number || "")}" />
+        <button type="button" class="secondary-btn" data-profile-action="sync-erp">Synchronizace s ERP</button>
+      </div>
+    </label>
+  `;
+}
+
+async function saveProfileFromForm(successMessage = "Profil byl uložen.") {
   const payload = {};
   els.form.querySelectorAll("[data-profile-field]").forEach((field) => {
     payload[field.dataset.profileField] = field.value.trim();
@@ -1268,7 +1720,7 @@ async function saveProfileFromForm() {
   const saved = await response.json();
   profileState.data = saved.profile;
   profileState.loaded = true;
-  profileState.message = "Profil byl uložen.";
+  profileState.message = successMessage;
   currentUser = {
     ...currentUser,
     display_name: saved.profile.display_name,
@@ -1279,6 +1731,59 @@ async function saveProfileFromForm() {
   saveState();
   updateUserChrome();
   renderProfile();
+}
+
+async function syncProfileWithErp() {
+  const personalNumber = els.form.querySelector('[data-profile-field="personal_number"]')?.value.trim() || "";
+  if (!personalNumber) {
+    profileState.message = "Nejdřív vyplň osobní číslo.";
+    renderProfile();
+    return;
+  }
+
+  profileState.message = "Synchronizuji údaje z ERP Helios...";
+  renderProfile();
+
+  const response = await apiFetch("/api/users/me/erp-sync", {
+    method: "POST",
+    body: JSON.stringify({ personal_number: personalNumber }),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    profileState.message = erpSyncErrorMessage(payload.error, payload.message);
+    renderProfile();
+    return;
+  }
+
+  const payload = await response.json();
+  profileState.data = payload.profile;
+  profileState.loaded = true;
+  currentUser = {
+    ...currentUser,
+    display_name: payload.profile.display_name || currentUser?.display_name || "",
+    email: payload.profile.email || currentUser?.email || "",
+  };
+  if (payload.erp?.roleSync?.approver_from_erp) {
+    currentUser.roles = Array.from(new Set([...(currentUser.roles || []), "approver"]));
+  }
+  defaultsLoaded = false;
+  await ensureCurrentDefaults(true);
+  applyDefaultsToExistingDraft();
+  saveState();
+  updateUserChrome();
+  const vehicleCount = Number(payload.erp?.vehicleCount || 0);
+  const approverMessage = payload.erp?.roleSync?.approver_from_erp ? " Uživatel je označen jako schvalovatel." : "";
+  profileState.message = `Synchronizace z ERP proběhla. Doplněno vozidel: ${vehicleCount}.${approverMessage}`;
+  renderProfile();
+}
+
+function erpSyncErrorMessage(code, detail = "") {
+  if (code === "missing_personal_number") return "Nejdřív vyplň osobní číslo.";
+  if (code === "erp_employee_not_found") return "V ERP Helios nebyl nalezen zaměstnanec s tímto osobním číslem.";
+  if (code === "personal_number_exists") return "Toto osobní číslo už je zadané u jiného uživatele v databázi cestovních příkazů.";
+  if (code === "erp_error") return `ERP Helios teď nelze načíst.${detail ? ` Detail: ${detail}` : ""}`;
+  return "Synchronizace z ERP se nepodařila.";
 }
 
 async function loadApprovalData() {
@@ -1296,8 +1801,9 @@ async function loadApprovalData() {
   const dashboard = await dashboardResponse.json();
   approvalState.summary = dashboard.summary || { pending_count: 0, overdue_count: 0, pending_gross_amount: 0 };
   approvalState.orders = dashboard.orders || [];
-  approvalState.notifications = await notificationsResponse.json();
+  approvalState.notifications = normalizeApprovalNotifications(await notificationsResponse.json());
   approvalState.loaded = true;
+  updateApprovalBadge(approvalState.summary.pending_count);
 }
 
 async function loadApprovalDetail(approvalId) {
@@ -1317,16 +1823,158 @@ async function loadApprovalDetail(approvalId) {
 
 async function refreshNotificationBadge() {
   if (!API_ENABLED || !currentUser || !els.approvalBadge) return;
+  if (!(can("approver") || can("admin") || can("accountant"))) {
+    updateApprovalBadge(0);
+    return;
+  }
+
   try {
-    const response = await apiFetch("/api/notifications");
+    const response = await apiFetch("/api/approver/dashboard");
     if (!response.ok) return;
-    approvalState.notifications = await response.json();
-    const unread = Number(approvalState.notifications?.badge?.unread_count || 0);
-    els.approvalBadge.hidden = unread === 0;
-    els.approvalBadge.textContent = String(unread);
+    const dashboard = await response.json();
+    approvalState.summary = dashboard.summary || approvalState.summary;
+    updateApprovalBadge(approvalState.summary.pending_count);
   } catch {
     // Badge refresh is opportunistic.
   }
+}
+
+async function refreshOwnedOrderStatuses() {
+  if (!API_ENABLED || !currentUser) return false;
+
+  try {
+    const response = await apiFetch("/api/travel-orders/my/statuses");
+    if (!response.ok) return false;
+    const statuses = await response.json();
+    if (!Array.isArray(statuses) || !statuses.length) return false;
+
+    const byNumber = new Map(statuses.map((item) => [item.orderNo, item]));
+    let changed = false;
+    state.orders.forEach((order) => {
+      if (!ownsOrder(order)) return;
+      const serverOrder = byNumber.get(order.number);
+      if (!serverOrder) return;
+      changed = applyServerOrderStatus(order, serverOrder) || changed;
+    });
+
+    if (changed) saveState();
+    return changed;
+  } catch {
+    return false;
+  }
+}
+
+async function refreshOwnedOrdersAndRender() {
+  if (appMode !== "orders") return;
+  const changed = await refreshOwnedOrderStatuses();
+  if (changed) render();
+}
+
+function applyServerOrderStatus(order, serverOrder) {
+  let changed = false;
+  const nextStatus = serverOrder.status || order.status;
+  if (nextStatus && order.status !== nextStatus) {
+    order.status = nextStatus;
+    changed = true;
+  }
+
+  if (serverOrder.travelOrderId && order.serverId !== serverOrder.travelOrderId) {
+    order.serverId = serverOrder.travelOrderId;
+    changed = true;
+  }
+  if (serverOrder.exportStatus && order.exportStatus !== serverOrder.exportStatus) {
+    order.exportStatus = serverOrder.exportStatus;
+    changed = true;
+  }
+  if ((serverOrder.heliosDocumentId || "") !== (order.heliosDocumentId || "")) {
+    order.heliosDocumentId = serverOrder.heliosDocumentId || "";
+    changed = true;
+  }
+  if ((serverOrder.heliosExportedAt || "") !== (order.heliosExportedAt || "")) {
+    order.heliosExportedAt = serverOrder.heliosExportedAt || "";
+    changed = true;
+  }
+
+  const decisionStatus = serverOrder.approvalStatus || "";
+  const decisionAt = serverOrder.approvalDecidedAt || "";
+  const decisionComment = serverOrder.approvalDecisionComment || "";
+  const shouldShowReturnNotice = decisionStatus === "returned" && nextStatus === "draft";
+  if (shouldShowReturnNotice) {
+    const nextNotice = { status: "returned", at: decisionAt, comment: decisionComment };
+    const currentNotice = order.returnNotice || {};
+    if (
+      currentNotice.status !== nextNotice.status ||
+      (currentNotice.at || "") !== (nextNotice.at || "") ||
+      (currentNotice.comment || "") !== (nextNotice.comment || "")
+    ) {
+      order.returnNotice = nextNotice;
+      changed = true;
+    }
+  } else if (order.returnNotice) {
+    delete order.returnNotice;
+    changed = true;
+  }
+
+  order.approval = order.approval || {};
+  if (nextStatus === "submitted") {
+    const nextApproverId = serverOrder.currentApproverUserId || "";
+    if ((order.approval.approverUserId || "") !== nextApproverId) {
+      order.approval.approverUserId = nextApproverId;
+      order.approval.approverName = serverOrder.currentApproverName || "";
+      changed = true;
+    }
+  }
+
+  const updatedAt = serverOrder.updatedAt || serverOrder.approvedAt || serverOrder.rejectedAt;
+  if (updatedAt && order.updatedAt !== updatedAt) {
+    order.updatedAt = updatedAt;
+    changed = true;
+  }
+
+  if (serverOrder.approvedAt) {
+    order.history = Array.isArray(order.history) ? order.history : [];
+    if (!order.history.some((item) => item.status === "approved" && item.at === serverOrder.approvedAt)) {
+      order.history.push({ at: serverOrder.approvedAt, status: "approved", note: "Schváleno" });
+      changed = true;
+    }
+  }
+  if (serverOrder.rejectedAt) {
+    order.history = Array.isArray(order.history) ? order.history : [];
+    if (!order.history.some((item) => item.status === "rejected" && item.at === serverOrder.rejectedAt)) {
+      const note = decisionComment ? `Zamítnuto: ${decisionComment}` : "Zamítnuto";
+      order.history.push({ at: serverOrder.rejectedAt, status: "rejected", note });
+      changed = true;
+    }
+  }
+  if (shouldShowReturnNotice && decisionAt) {
+    order.history = Array.isArray(order.history) ? order.history : [];
+    if (!order.history.some((item) => item.status === "returned" && item.at === decisionAt)) {
+      const note = decisionComment ? `Vráceno k doplnění: ${decisionComment}` : "Vráceno k doplnění";
+      order.history.push({ at: decisionAt, status: "returned", note });
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function updateApprovalBadge(count) {
+  if (!els.approvalBadge) return;
+  const pending = Number(count || 0);
+  els.approvalBadge.hidden = pending === 0;
+  els.approvalBadge.textContent = String(pending);
+}
+
+function normalizeApprovalNotifications(payload) {
+  const items = (payload?.items || []).filter((item) => item.type_code === "approval_requested");
+  return {
+    ...payload,
+    items,
+    badge: {
+      unread_count: items.length,
+      failed_count: Number(payload?.badge?.failed_count || 0),
+    },
+  };
 }
 
 function renderApprovals() {
@@ -1473,6 +2121,7 @@ function approvalDetailSection(detail) {
               <tr>
                 <th>Úsek</th>
                 <th>Čas</th>
+                <th>Typ</th>
                 <th>Doprava</th>
                 <th>Km</th>
                 <th>Jízdné/PHM</th>
@@ -1528,15 +2177,16 @@ function approvalRouteRows(detail) {
   const lines = detail.routeLines || [];
   const calcLines = detailCalculation(detail).lines || [];
   if (!lines.length) {
-    return [`<tr><td colspan="9">Nejsou zadané žádné úseky cesty.</td></tr>`];
+    return [`<tr><td colspan="10">Nejsou zadané žádné úseky cesty.</td></tr>`];
   }
 
   return lines.map((line, index) => {
     const calcLine = calcLines[index] || {};
-    const transportAmount = number(line.fare) + number(line.calculatedPrivateVehicleAmount || calcLine.privateComp);
-    const mealAmount = number(line.calculatedMealAmount || calcLine.meal);
-    const lodging = number(line.lodging);
-    const other = number(line.other);
+    const isPrivateSegment = (line.segmentType || line.segment_type || "domestic") === "private";
+    const transportAmount = isPrivateSegment ? 0 : number(line.fare) + number(line.calculatedPrivateVehicleAmount || calcLine.privateComp);
+    const mealAmount = isPrivateSegment ? 0 : number(line.calculatedMealAmount || calcLine.meal);
+    const lodging = isPrivateSegment ? 0 : number(line.lodging);
+    const other = isPrivateSegment ? 0 : number(line.other);
     const total = number(line.calculatedTotalAmount || calcLine.total) || transportAmount + mealAmount + lodging + other;
     return `
       <tr>
@@ -1545,6 +2195,7 @@ function approvalRouteRows(detail) {
           <small>${escapeHtml(line.company || line.purpose || "")}</small>
         </td>
         <td>${escapeHtml(formatDateTime(line.startAt))}<br /><small>${escapeHtml(formatDateTime(line.endAt))}</small></td>
+        <td>${escapeHtml(segmentTypeLabel(line.segmentType || line.segment_type))}</td>
         <td>${escapeHtml(TRANSPORT_OPTIONS[line.transport] || line.transport || "-")}</td>
         <td>${formatNumber(line.km || 0, 0)}</td>
         <td>${formatCurrency(transportAmount)}</td>
@@ -1566,7 +2217,8 @@ function approvalAttachmentRow(attachment) {
       </div>
       <div>
         <span>${escapeHtml(attachment.documentDate || "bez data")}</span>
-        <strong>${formatCurrency(attachment.amount || 0)}</strong>
+        <strong>${formatAttachmentAmount(attachment)}</strong>
+        <small>Přepočet ${escapeHtml(formatCurrency(attachmentAmountCzk(attachment)))}</small>
         <small>${escapeHtml(formatBytes(attachment.byteSize || 0))}</small>
       </div>
     </div>
@@ -1575,6 +2227,10 @@ function approvalAttachmentRow(attachment) {
 
 function fuelLabel(value) {
   return FUEL_OPTIONS[value] || value || "-";
+}
+
+function segmentTypeLabel(value) {
+  return SEGMENT_TYPE_OPTIONS[value] || SEGMENT_TYPE_OPTIONS.domestic;
 }
 
 function fuelPriceModeLabel(value) {
@@ -1587,11 +2243,12 @@ async function decideApproval(action, approvalId) {
     method: "POST",
     body: JSON.stringify({ action, comment }),
   });
+  const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     approvalState.message = "Rozhodnutí se nepodařilo uložit.";
   } else {
-    approvalState.message = "Rozhodnutí bylo uloženo.";
+    approvalState.message = approvalDecisionMessage(action, payload.decision);
     approvalState.detail = null;
     approvalState.selectedApprovalId = null;
   }
@@ -1599,6 +2256,23 @@ async function decideApproval(action, approvalId) {
   await loadApprovalData();
   renderApprovals();
   refreshNotificationBadge();
+}
+
+function approvalDecisionMessage(action, decision = {}) {
+  if (action !== "approved") return "Rozhodnutí bylo uloženo.";
+  const sync = decision.helios_staging_sync;
+  if (!sync) return "Cestovní příkaz byl schválen.";
+  if (sync.ok) {
+    return `Cestovní příkaz byl schválen a Helios staging byl aktualizován. K importu je ${Number(sync.activeImportCount || 0)} položek.`;
+  }
+  return `Cestovní příkaz byl schválen, ale Helios staging se nepodařilo aktualizovat: ${heliosStagingSyncError(sync.error)}.`;
+}
+
+function heliosStagingSyncError(code = "") {
+  if (String(code).includes("missing_helios_import_api_token")) return "chybí HELIOS_IMPORT_API_TOKEN";
+  if (String(code).includes("import_list_api_failed")) return "API nevrátilo seznam k importu";
+  if (String(code).includes("import_full_api_failed")) return "API nevrátilo detail k importu";
+  return "zkontroluj připojení k MSSQL a staging tabulku";
 }
 
 function renderList() {
@@ -1613,7 +2287,7 @@ function renderList() {
         order.trip.destination,
         order.employee.costCenter,
       ].join(" "));
-      const statusMatches = statusFilter === "all" || order.status === statusFilter;
+      const statusMatches = statusFilter === "all" || effectiveOrderStatus(order) === statusFilter;
       return statusMatches && (!query || text.includes(query));
     })
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
@@ -1629,15 +2303,16 @@ function renderList() {
     const calc = calculateOrder(order);
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `order-list-item ${order.id === state.selectedId ? "active" : ""}`;
+    button.className = `order-list-item ${order.id === state.selectedId ? "active" : ""} ${hasReturnNotice(order) ? "needs-attention" : ""}`;
     button.dataset.orderId = order.id;
     button.innerHTML = `
-      <span class="order-list-title">
-        <span>${escapeHtml(order.number)}</span>
-        ${statusPill(order.status)}
+        <span class="order-list-title">
+          <span>${escapeHtml(order.number)}</span>
+        ${orderStatusPill(order)}
       </span>
       <span class="order-list-meta">${escapeHtml(order.employee.name || "Bez zaměstnance")}</span>
       <span class="order-list-meta">${escapeHtml(order.trip.purpose || "Bez účelu")} · ${formatCurrency(calc.totalGross)}</span>
+      ${hasReturnNotice(order) ? `<span class="order-list-alert">${escapeHtml(returnNoticeSummary(order))}</span>` : ""}
     `;
     els.list.append(button);
   });
@@ -1662,7 +2337,7 @@ function renderForm(options = {}) {
         <div>
           <h2>${escapeHtml(order.number)}</h2>
           <div class="header-meta">
-            ${statusPill(order.status)}
+            ${orderStatusPill(order)}
             <span>Aktualizováno ${formatDateTime(order.updatedAt)}</span>
             <span>${escapeHtml(order.employee.name || "Bez zaměstnance")}</span>
           </div>
@@ -1674,6 +2349,7 @@ function renderForm(options = {}) {
         </div>
       </div>
 
+      ${returnNoticeBanner(order)}
       ${overviewSection(order, calc)}
       ${tabsSection()}
       ${activeTabSection(order, calc)}
@@ -1682,6 +2358,18 @@ function renderForm(options = {}) {
 
   renderPrintSheet(order);
   restoreTabbarPosition(options.tabScrollLeft ?? previousTabScrollLeft, Boolean(options.revealActiveTab));
+  if (options.focusLineId) focusRouteLine(options.focusLineId);
+}
+
+function focusRouteLine(lineId) {
+  requestAnimationFrame(() => {
+    const row = Array.from(document.querySelectorAll("[data-line-id]")).find((item) => item.dataset.lineId === lineId);
+    if (!row) return;
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    const preferredField = row.querySelector('[data-line-field="to"]') || row.querySelector("[data-line-field]");
+    preferredField?.focus({ preventScroll: true });
+    preferredField?.select?.();
+  });
 }
 
 function overviewSection(order, calc) {
@@ -1702,6 +2390,25 @@ function overviewSection(order, calc) {
       </div>
     </section>
   `;
+}
+
+function returnNoticeBanner(order) {
+  if (!hasReturnNotice(order)) return "";
+  const comment = String(order.returnNotice?.comment || "").trim();
+  return `
+    <section class="return-notice" aria-label="Vrácení cestovního příkazu">
+      <div>
+        <strong>Vráceno k doplnění</strong>
+        <span>${escapeHtml(order.returnNotice?.at ? formatDateTime(order.returnNotice.at) : "")}</span>
+      </div>
+      <p>${escapeHtml(comment || "Schvalovatel nevyplnil poznámku.")}</p>
+    </section>
+  `;
+}
+
+function returnNoticeSummary(order) {
+  const comment = String(order.returnNotice?.comment || "").trim();
+  return comment ? `Poznámka: ${comment}` : "Vráceno k doplnění";
 }
 
 function compactStat(label, key, value) {
@@ -1782,6 +2489,11 @@ function tripSection(order) {
         ${approverPickerField(order)}
         ${field("Počátek cesty", "trip.startAt", order.trip.startAt, "datetime-local")}
         ${field("Konec cesty", "trip.endAt", order.trip.endAt, "datetime-local")}
+        <label>
+          <span>Měna vyúčtování</span>
+          <select data-path="trip.currencyCode">${currencyOptionsHtml(order.trip.currencyCode || "CZK")}</select>
+        </label>
+        ${readonlyField("Kurz měny", formatExchangeRate(order.trip.exchangeRate, order.trip.exchangeRateDate), "exchange-rate-field")}
         ${field("Místo jednání", "trip.destination", order.trip.destination)}
         ${field("Účel cesty", "trip.purpose", order.trip.purpose, "text", "wide")}
         ${field("Navštívené firmy", "trip.visitedCompanies", order.trip.visitedCompanies, "text", "wide")}
@@ -1794,10 +2506,46 @@ function tripSection(order) {
   `;
 }
 
+function currencyOptionsHtml(selectedValue = "CZK") {
+  const selected = normalizeCurrencyCode(selectedValue);
+  const currencies = new Set(Object.keys(CURRENCY_OPTIONS));
+  currencies.add(selected);
+  foreignTravelState.currencies.forEach((currency) => currencies.add(normalizeCurrencyCode(currency)));
+  foreignTravelState.countries.forEach((country) => currencies.add(normalizeCurrencyCode(country.currencyCode)));
+  return Array.from(currencies).sort().map((code) => {
+    return `<option value="${escapeHtml(code)}" ${code === selected ? "selected" : ""}>${escapeHtml(code)}</option>`;
+  }).join("");
+}
+
+function readonlyField(label, value, className = "") {
+  return `
+    <label class="${escapeHtml(className)}">
+      <span>${escapeHtml(label)}</span>
+      <input class="readonly-input" readonly value="${escapeHtml(value || "")}" />
+    </label>
+  `;
+}
+
+function formatExchangeRate(rate, date) {
+  const value = number(rate || 1);
+  const dateText = normalizeDateOnly(date);
+  return `${formatNumber(value, 6)}${dateText ? ` (${dateText})` : ""}`;
+}
+
 function approverPickerField(order) {
-  const approvers = currentDefaults?.approvers || [];
-  if (!approvers.length) return "";
-  const selectedId = order.approval?.approverUserId || currentDefaults?.approver?.id || approvers.find((approver) => approver.is_default)?.id || "";
+  const approvers = orderApproverOptions();
+  if (!approvers.length) {
+    return `
+      <div class="wide form-note">
+        <span class="field-caption">Schvalovatel tohoto příkazu</span>
+        <p class="note">Není nastavený žádný dostupný schvalovatel.</p>
+      </div>
+    `;
+  }
+  const fallback = defaultOrderApprover();
+  const selectedId = approvers.some((approver) => approver.id === order.approval?.approverUserId)
+    ? order.approval.approverUserId
+    : fallback?.id || "";
   const options = approvers.map((approver) => {
     const label = `${approver.name || approver.display_name} (${approver.email || approver.login || ""})`;
     return `<option value="${escapeHtml(approver.id)}" ${approver.id === selectedId ? "selected" : ""}>${escapeHtml(label)}</option>`;
@@ -1863,8 +2611,34 @@ function vehiclePickerField(order) {
 
 function vehicleLabel(vehicle) {
   const main = [vehicle.brand, vehicle.plate].filter(Boolean).join(" · ");
-  if (main) return vehicle.is_default ? `${main} (výchozí)` : main;
-  return vehicle.is_default ? "Výchozí vozidlo" : "Uložené vozidlo";
+  const status = vehicleErpStatusText(vehicle);
+  if (main) return vehicle.is_default ? `${main} (výchozí, ${status})` : `${main} (${status})`;
+  return vehicle.is_default ? `Výchozí vozidlo (${status})` : `Uložené vozidlo (${status})`;
+}
+
+function vehicleErpStatusText(vehicle = {}) {
+  const heliosId = vehicle.helios_id || vehicle.heliosId || "";
+  const status = vehicle.helios_export_status || vehicle.heliosExportStatus || "not_ready";
+  if (heliosId || status === "exported") return "v ERP";
+  if (status === "queued" || status === "ready") return "čeká na ERP";
+  if (status === "failed") return "ERP chyba";
+  return "lokální";
+}
+
+function vehicleErpBadge(vehicle = {}) {
+  const status = vehicle.helios_export_status || vehicle.heliosExportStatus || "not_ready";
+  const text = vehicleErpStatusText(vehicle);
+  const className = status === "failed"
+    ? "status-rejected"
+    : status === "queued" || status === "ready"
+      ? "status-submitted"
+      : vehicle.helios_id || vehicle.heliosId || status === "exported"
+        ? "status-approved"
+        : "status-draft";
+  const title = text === "lokální"
+    ? "Do ERP se zařadí až ve chvíli, kdy bude použité v odeslaném cestovním příkazu."
+    : "";
+  return `<span class="status-pill ${className}" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
 }
 
 function applyVehicleToOrder(order, vehicleId) {
@@ -1894,7 +2668,7 @@ function applyVehicleToOrder(order, vehicleId) {
 }
 
 function applyApproverToOrder(order, approverId) {
-  const approver = (currentDefaults?.approvers || []).find((item) => item.id === approverId);
+  const approver = orderApproverOptions().find((item) => item.id === approverId);
   order.approval = {
     approverUserId: approver?.id || "",
     approverName: approver?.name || approver?.display_name || "",
@@ -1902,7 +2676,7 @@ function applyApproverToOrder(order, approverId) {
 }
 
 function routesSection(order, calc) {
-  const cards = order.routeLines.map((line, index) => routeCard(line, calc.lines[index], index)).join("");
+  const cards = order.routeLines.map((line, index) => routeCard(line, calc.lines[index], index, order.routeLines.length)).join("");
   return `
     <section class="section">
       <div class="section-header">
@@ -1919,7 +2693,10 @@ function routesSection(order, calc) {
   `;
 }
 
-function routeCard(line, lineCalc, index) {
+function routeCard(line, lineCalc, index, totalLines) {
+  const lastLineActions = index === totalLines - 1
+    ? `<div class="route-card-actions"><button type="button" class="primary-btn" data-action="add-line">Přidat další řádek</button></div>`
+    : "";
   return `
     <article class="route-card" data-line-id="${escapeHtml(line.id)}">
       <div class="route-card-head">
@@ -1942,6 +2719,11 @@ function routeCard(line, lineCalc, index) {
         ${lineField("Účel", "purpose", line.purpose)}
         ${lineField("Kilometry", "km", line.km, "number", "1")}
         <label>
+          <span>Typ úseku</span>
+          ${lineSegmentTypeSelect(line.segmentType || "domestic")}
+        </label>
+        ${foreignCountryField(line)}
+        <label>
           <span>Doprava</span>
           ${lineTransportSelect(line.transport)}
         </label>
@@ -1951,8 +2733,53 @@ function routeCard(line, lineCalc, index) {
         ${lineField("Nocležné", "lodging", line.lodging, "number", "0.01")}
         ${lineField("Vedlejší výdaje", "other", line.other, "number", "0.01")}
         ${lineField("Jídla zdarma", "freeMeals", line.freeMeals, "number", "1")}
+        ${foreignLineInfo(line)}
       </div>
+      ${lastLineActions}
     </article>
+  `;
+}
+
+function foreignCountryField(line) {
+  if ((line.segmentType || "domestic") !== "foreign") return "";
+  if (!foreignTravelState.countries.length) {
+    return `
+      <label>
+        <span>Země</span>
+        <input class="readonly-input" readonly value="Číselník zemí není načtený" />
+      </label>
+    `;
+  }
+  const countryOptions = [...foreignTravelState.countries];
+  if (line.countryCode && !countryOptions.some((country) => country.code === line.countryCode)) {
+    countryOptions.unshift({
+      code: line.countryCode,
+      mealRate: line.foreignMealRate || 0,
+      currencyCode: line.foreignCurrencyCode || "EUR",
+      exchangeRate: line.foreignExchangeRate || 1,
+    });
+  }
+  const options = countryOptions.map((country) => {
+    const selected = country.code === line.countryCode ? "selected" : "";
+    const label = `${country.code} · ${formatCurrency(country.mealRate, country.currencyCode)} · kurz ${formatNumber(country.exchangeRate || 1, 6)}`;
+    return `<option value="${escapeHtml(country.code)}" ${selected}>${escapeHtml(label)}</option>`;
+  });
+  return `
+    <label>
+      <span>Země</span>
+      <select data-line-field="countryCode">${options.join("")}</select>
+    </label>
+  `;
+}
+
+function foreignLineInfo(line) {
+  if ((line.segmentType || "domestic") !== "foreign") return "";
+  const currency = normalizeCurrencyCode(line.foreignCurrencyCode || "EUR");
+  return `
+    <div class="route-foreign-info">
+      <span>Stravné ${escapeHtml(formatCurrency(line.foreignMealRate || 0, currency))}</span>
+      <span>Kurz ${escapeHtml(formatExchangeRate(line.foreignExchangeRate || 1, line.foreignExchangeRateDate))}</span>
+    </div>
   `;
 }
 
@@ -1979,6 +2806,14 @@ function lineTransportSelect(value) {
   return `<select data-line-field="transport">${options.join("")}</select>`;
 }
 
+function lineSegmentTypeSelect(value) {
+  const normalized = SEGMENT_TYPE_OPTIONS[value] ? value : "domestic";
+  const options = Object.entries(SEGMENT_TYPE_OPTIONS).map(([key, label]) => {
+    return `<option value="${key}" ${key === normalized ? "selected" : ""}>${label}</option>`;
+  });
+  return `<select data-line-field="segmentType">${options.join("")}</select>`;
+}
+
 function documentsSection(order) {
   order.attachments = Array.isArray(order.attachments) ? order.attachments : [];
   const attachmentCards = order.attachments.length
@@ -1997,6 +2832,10 @@ function documentsSection(order) {
             <select data-attachment-meta="expenseKind">${optionsHtml(EXPENSE_KIND_OPTIONS, "fuel")}</select>
           </label>
           <label>
+            <span>Náklad Helios</span>
+            <select data-attachment-meta="heliosExpenseCodeId">${expenseCodeOptionsHtml()}</select>
+          </label>
+          <label>
             <span>Typ dokladu</span>
             <select data-attachment-meta="documentKind">${optionsHtml(DOCUMENT_KIND_OPTIONS, "receipt")}</select>
           </label>
@@ -2007,6 +2846,14 @@ function documentsSection(order) {
           <label>
             <span>Částka na dokladu</span>
             <input data-attachment-meta="amount" type="number" min="0" step="0.01" inputmode="decimal" value="0" />
+          </label>
+          <label>
+            <span>Měna</span>
+            <select data-attachment-meta="currencyCode">${currencyOptionsHtml(order.trip.currencyCode || "CZK")}</select>
+          </label>
+          <label>
+            <span>Kurz do Kč</span>
+            <input data-attachment-meta="exchangeRate" type="number" min="0" step="0.000001" inputmode="decimal" value="1" />
           </label>
           <label class="wide">
             <span>Popis</span>
@@ -2023,6 +2870,17 @@ function documentsSection(order) {
   `;
 }
 
+function expenseCodeOptionsHtml(selectedValue = "") {
+  const selected = String(selectedValue || "");
+  const options = [`<option value="">Automaticky podle typu výdaje</option>`];
+  foreignTravelState.expenseCodes.forEach((code) => {
+    const value = String(code.id || "");
+    const label = `${code.label || code.code || value}${code.code ? ` (${code.code})` : ""}`;
+    options.push(`<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`);
+  });
+  return options.join("");
+}
+
 function attachmentCard(attachment) {
   const download = attachment.dataUrl
     ? `<a class="secondary-btn" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.fileName || "doklad")}">Otevřít</a>`
@@ -2031,10 +2889,11 @@ function attachmentCard(attachment) {
     <article class="attachment-card" data-attachment-id="${escapeHtml(attachment.id)}">
       <div>
         <strong>${escapeHtml(attachment.fileName || "Doklad")}</strong>
-        <p>${escapeHtml(expenseKindLabel(attachment.expenseKind))} · ${escapeHtml(documentKindLabel(attachment.documentKind))}</p>
+        <p>${escapeHtml(expenseKindLabel(attachment.expenseKind))} · ${escapeHtml(documentKindLabel(attachment.documentKind))}${attachment.heliosExpenseCodeLabel ? ` · ${escapeHtml(attachment.heliosExpenseCodeLabel)}` : ""}</p>
         <small>
           ${escapeHtml(attachment.documentDate || "bez data")}
-          · ${escapeHtml(formatCurrency(attachment.amount || 0))}
+          · ${escapeHtml(formatAttachmentAmount(attachment))}
+          · přepočet ${escapeHtml(formatCurrency(attachmentAmountCzk(attachment)))}
           · ${escapeHtml(formatBytes(attachment.byteSize || 0))}
         </small>
         ${attachment.description ? `<p>${escapeHtml(attachment.description)}</p>` : ""}
@@ -2065,7 +2924,8 @@ function summarySection(order, calc) {
             <tr><th>Cestovné a PHM</th><td data-summary="totalTransport">${formatCurrency(calc.totalTransport)}</td></tr>
             <tr><th>Stravné</th><td data-summary="totalMeals">${formatCurrency(calc.totalMeals)}</td></tr>
             <tr><th>Nocležné</th><td data-summary="totalLodging">${formatCurrency(calc.totalLodging)}</td></tr>
-            <tr><th>Vedlejší výdaje</th><td data-summary="totalOther">${formatCurrency(calc.totalOther)}</td></tr>
+            <tr><th>Vedlejší výdaje v řádcích</th><td data-summary="totalLineOther">${formatCurrency(calc.totalLineOther)}</td></tr>
+            <tr><th>Přiložené doklady</th><td data-summary="totalAttachmentExpenses">${formatCurrency(calc.totalAttachmentExpenses)}</td></tr>
             <tr><th>Celkem</th><td data-summary="totalGross">${formatCurrency(calc.totalGross)}</td></tr>
             <tr><th>Záloha</th><td data-summary="advance">${formatCurrency(calc.advance)}</td></tr>
             <tr><th>K výplatě / vrácení</th><td><strong data-summary="balanceRounded">${formatCurrency(calc.balanceRounded)}</strong></td></tr>
@@ -2177,17 +3037,20 @@ function optionsHtml(options, value) {
 
 function workflowButtons(order) {
   const buttons = [];
+  if (isImportedOrder(order)) {
+    return buttons.join("");
+  }
   if (order.status === "draft") {
     buttons.push(button("submit", "Předat ke schválení"));
   }
-  if (order.status === "submitted") {
+  if (order.status === "submitted" && !API_ENABLED) {
     buttons.push(button("approve", "Schválit"));
     buttons.push(button("return", "Vrátit"));
     buttons.push(button("reject", "Zamítnout", "danger"));
   }
   if (order.status === "approved") {
     buttons.push(button("settlement", "Otevřít vyúčtování"));
-    buttons.push(button("return", "Vrátit"));
+    if (ownsOrder(order)) buttons.push(button("return", "Vrátit do úprav"));
   }
   if (order.status === "settlement") {
     buttons.push(button("close", "Uzavřít"));
@@ -2209,13 +3072,61 @@ function statusPill(status) {
   return `<span class="status-pill status-${escapeHtml(status)}">${escapeHtml(label)}</span>`;
 }
 
+function orderStatusPill(order) {
+  return statusPill(effectiveOrderStatus(order));
+}
+
+function effectiveOrderStatus(order) {
+  if (hasReturnNotice(order)) return "returned";
+  return isImportedOrder(order) ? "imported" : order.status;
+}
+
+function hasReturnNotice(order) {
+  return Boolean(order && order.status === "draft" && order.returnNotice?.status === "returned");
+}
+
+function isImportedOrder(order) {
+  return Boolean(order && (order.exportStatus === "exported" || order.heliosDocumentId));
+}
+
+function canEditOrder(order) {
+  return Boolean(order && order.status === "draft" && ownsOrder(order));
+}
+
+function blockLockedOrderEdit(order) {
+  if (canEditOrder(order)) return false;
+  if (isImportedOrder(order)) {
+    alert("Cestovní příkaz už je naimportovaný do Heliosu a nejde ho vrátit do úprav.");
+    renderForm();
+    return true;
+  }
+  alert("Schválený cestovní příkaz nejde upravovat přímo. Nejdřív ho vrať do úprav, oprav položky, znovu předej ke schválení a po schválení proveď novou synchronizaci do Heliosu.");
+  renderForm();
+  return true;
+}
+
 async function handleFormInput(event) {
+  const vehicleDocumentInput = event.target.closest("[data-vehicle-document-file]");
+  if (vehicleDocumentInput) {
+    if (event.type !== "change") return;
+    await addVehicleDocumentFiles(vehicleDocumentInput);
+    vehicleDocumentInput.value = "";
+    if (appMode === "profile") {
+      profileState.message = "Ukládám přílohu OTP...";
+      await saveProfileFromForm("Příloha OTP byla uložena.");
+    } else if (appMode === "admin") {
+      showTransientFormMessage("Příloha OTP je připravená. Pro trvalé uložení ulož uživatele.");
+    }
+    return;
+  }
+
   const order = getSelectedOrder();
   if (!order) return;
 
   const attachmentInput = event.target.closest("[data-attachment-file]");
   if (attachmentInput) {
     if (event.type !== "change") return;
+    if (blockLockedOrderEdit(order)) return;
     await addAttachmentFiles(order, attachmentInput);
     attachmentInput.value = "";
     touch(order);
@@ -2227,10 +3138,25 @@ async function handleFormInput(event) {
 
   const lineField = event.target.closest("[data-line-field]");
   if (lineField) {
+    if (blockLockedOrderEdit(order)) return;
     const row = lineField.closest("[data-line-id]");
     const line = order.routeLines.find((item) => item.id === row.dataset.lineId);
     if (!line) return;
     line[lineField.dataset.lineField] = parseInputValue(lineField);
+    if (lineField.dataset.lineField === "segmentType") {
+      if (line.segmentType === "foreign") {
+        await refreshForeignTravelReferenceForOrder(order);
+        applyForeignCountryToLine(line, line.countryCode || foreignTravelState.countries[0]?.code || "");
+        renderForm();
+      } else {
+        clearForeignLine(line);
+        renderForm();
+      }
+    }
+    if (lineField.dataset.lineField === "countryCode") {
+      applyForeignCountryToLine(line, line.countryCode);
+      renderForm();
+    }
     touch(order);
     saveState();
     refreshDerivedUi(order);
@@ -2240,6 +3166,7 @@ async function handleFormInput(event) {
 
   const vehiclePicker = event.target.closest("[data-vehicle-picker]");
   if (vehiclePicker) {
+    if (blockLockedOrderEdit(order)) return;
     applyVehicleToOrder(order, vehiclePicker.value);
     touch(order);
     saveState();
@@ -2250,6 +3177,7 @@ async function handleFormInput(event) {
 
   const approverPicker = event.target.closest("[data-approver-picker]");
   if (approverPicker) {
+    if (blockLockedOrderEdit(order)) return;
     applyApproverToOrder(order, approverPicker.value);
     touch(order);
     saveState();
@@ -2259,6 +3187,7 @@ async function handleFormInput(event) {
 
   const pathField = event.target.closest("[data-path]");
   if (pathField) {
+    if (blockLockedOrderEdit(order)) return;
     setByPath(order, pathField.dataset.path, parseInputValue(pathField));
     if (pathField.dataset.path.startsWith("vehicle.") && pathField.dataset.path !== "vehicle.fuelPrice" && pathField.dataset.path !== "vehicle.basicKmRate") {
       order.vehicle.id = "";
@@ -2285,6 +3214,16 @@ async function handleFormInput(event) {
       if (!order.vehicle.secondaryFuelType) order.vehicle.secondaryConsumption = 0;
       renderForm();
     }
+    if (pathField.dataset.path === "trip.startAt") {
+      await refreshForeignTravelReferenceForOrder(order);
+      await refreshTripExchangeRate(order);
+      refreshForeignLinesForOrder(order);
+      renderForm();
+    }
+    if (pathField.dataset.path === "trip.currencyCode") {
+      await refreshTripExchangeRate(order);
+      renderForm();
+    }
     touch(order);
     saveState();
     refreshDerivedUi(order);
@@ -2294,6 +3233,7 @@ async function handleFormInput(event) {
 
   const rateField = event.target.closest("[data-rate-path]");
   if (rateField) {
+    if (blockLockedOrderEdit(order)) return;
     setByPath(state.rates, rateField.dataset.ratePath, parseInputValue(rateField));
     if (rateField.dataset.ratePath === "basicKmRate") {
       order.vehicle.basicKmRate = state.rates.basicKmRate;
@@ -2320,6 +3260,8 @@ async function handleFormClick(event) {
       await saveProfileFromForm();
     } else if (profileAction.dataset.profileAction === "add-vehicle") {
       addAdminVehicleCard();
+    } else if (profileAction.dataset.profileAction === "sync-erp") {
+      await syncProfileWithErp();
     }
     return;
   }
@@ -2336,7 +3278,19 @@ async function handleFormClick(event) {
 
   const removeAdminVehicle = event.target.closest("[data-admin-remove-vehicle]");
   if (removeAdminVehicle) {
-    removeAdminVehicleCard(removeAdminVehicle);
+    await removeAdminVehicleCard(removeAdminVehicle);
+    return;
+  }
+
+  const removeVehicleDocument = event.target.closest("[data-remove-vehicle-document]");
+  if (removeVehicleDocument) {
+    await removeVehicleDocumentCard(removeVehicleDocument);
+    return;
+  }
+
+  const downloadVehicleDoc = event.target.closest("[data-download-vehicle-document]");
+  if (downloadVehicleDoc) {
+    await downloadVehicleDocument(downloadVehicleDoc);
     return;
   }
 
@@ -2375,6 +3329,7 @@ async function handleFormClick(event) {
 
   const removeBtn = event.target.closest("[data-remove-line]");
   if (removeBtn) {
+    if (blockLockedOrderEdit(order)) return;
     const row = removeBtn.closest("[data-line-id]");
     if (order.routeLines.length === 1) {
       order.routeLines = [createBlankLine()];
@@ -2389,6 +3344,7 @@ async function handleFormClick(event) {
 
   const removeAttachmentBtn = event.target.closest("[data-remove-attachment]");
   if (removeAttachmentBtn) {
+    if (blockLockedOrderEdit(order)) return;
     const card = removeAttachmentBtn.closest("[data-attachment-id]");
     order.attachments = (order.attachments || []).filter((attachment) => attachment.id !== card?.dataset.attachmentId);
     touch(order);
@@ -2403,14 +3359,23 @@ async function handleFormClick(event) {
 
   const action = actionBtn.dataset.action;
   if (action === "add-line") {
-    order.routeLines.push(createBlankLine());
+    if (blockLockedOrderEdit(order)) return;
+    const newLine = createNextLine(order);
+    order.routeLines.push(newLine);
+    touch(order);
+    saveState();
+    renderForm({ focusLineId: newLine.id });
+    renderList();
+    return;
   } else if (action === "sync-trip-dates") {
+    if (blockLockedOrderEdit(order)) return;
     syncTripDates(order);
   } else if (action === "check-rates") {
     await refreshRateMonitor();
     renderForm();
     return;
   } else if (action === "reset-rates") {
+    if (blockLockedOrderEdit(order)) return;
     state.rates = structuredClone(DEFAULT_RATES);
     order.vehicle.basicKmRate = state.rates.basicKmRate;
     order.vehicle.fuelPriceMode = "decree";
@@ -2427,6 +3392,20 @@ async function handleFormClick(event) {
     const submitted = await submitOrderForApproval(order);
     if (!submitted) return;
     applyWorkflowAction(order, action);
+  } else if (API_ENABLED && ["approve", "reject"].includes(action)) {
+    alert("Schválení se provádí jen ve frontě vybraného schvalovatele.");
+    return;
+  } else if (API_ENABLED && action === "return" && order.status !== "approved") {
+    alert("Vrácení ke schvalování se provádí jen ve frontě vybraného schvalovatele.");
+    return;
+  } else if (API_ENABLED && action === "return" && order.status === "approved") {
+    if (isImportedOrder(order)) {
+      alert("Cestovní příkaz už je naimportovaný do Heliosu a nejde ho vrátit do úprav.");
+      return;
+    }
+    const returned = await returnOrderToDraft(order);
+    if (!returned) return;
+    applyWorkflowAction(order, action);
   } else {
     applyWorkflowAction(order, action);
   }
@@ -2436,10 +3415,73 @@ async function handleFormClick(event) {
   render();
 }
 
+async function returnOrderToDraft(order) {
+  if (!ownsOrder(order)) {
+    alert("Do úprav může cestovní příkaz vrátit jen jeho vlastník.");
+    return false;
+  }
+  const orderId = order.serverId || order.id;
+  if (!orderId) {
+    alert("Cestovní příkaz nemá serverové ID.");
+    return false;
+  }
+  try {
+    const response = await apiFetch(`/api/travel-orders/${encodeURIComponent(orderId)}/return-to-draft`, {
+      method: "POST",
+      body: JSON.stringify({ reason: "owner_edit" }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert(returnToDraftErrorMessage(payload.error));
+      return false;
+    }
+    order.serverId = payload.order?.travelOrderId || order.serverId;
+    order.exportStatus = payload.order?.exportStatus || "not_ready";
+    order.heliosDocumentId = payload.order?.heliosDocumentId || "";
+    order.heliosExportedAt = payload.order?.heliosExportedAt || "";
+    order.approval = order.approval || {};
+    order.approval.approverUserId = order.approval.approverUserId || defaultOrderApprover()?.id || "";
+    const sync = payload.order?.helios_staging_sync;
+    if (sync && !sync.ok) {
+      alert(`Cestovní příkaz je vrácený do úprav, ale Helios staging se nepodařilo aktualizovat: ${heliosStagingSyncError(sync.error)}.`);
+    }
+    return true;
+  } catch {
+    alert("Vrácení cestovního příkazu do úprav se nepodařilo.");
+    return false;
+  }
+}
+
+function returnToDraftErrorMessage(code) {
+  if (code === "travel_order_not_found") return "Cestovní příkaz nebyl na serveru nalezen pod tímto uživatelem.";
+  if (code === "travel_order_imported") return "Cestovní příkaz už je naimportovaný do Heliosu a nejde ho vrátit do úprav.";
+  if (code === "travel_order_not_returnable") return "Cestovní příkaz teď není ve stavu, který lze vrátit do úprav.";
+  return "Vrácení cestovního příkazu do úprav se nepodařilo.";
+}
+
 async function submitOrderForApproval(order) {
   if (!ownsOrder(order)) {
     alert("Tento cestovní příkaz nemůže předat jiný uživatel než jeho vlastník.");
     return false;
+  }
+  normalizeOrderApprover(order);
+  if (!order.approval?.approverUserId) {
+    alert("Vyber schvalovatele cestovního příkazu.");
+    return false;
+  }
+  if (order.approval.approverUserId === currentUserId()) {
+    alert("Vlastní cestovní příkaz si nemůžeš schválit sám sobě.");
+    return false;
+  }
+  const routeValidation = normalizeRouteLinesForSubmit(order);
+  if (!routeValidation.ok) {
+    activeTab = "settlement";
+    render();
+    alert(routeValidation.message);
+    return false;
+  }
+  if (routeValidation.lines.length !== order.routeLines.length) {
+    order.routeLines = routeValidation.lines;
   }
   const calculation = calculateOrder(order);
   try {
@@ -2449,8 +3491,16 @@ async function submitOrderForApproval(order) {
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      alert(payload.error || "Předání ke schválení se nepodařilo.");
+      alert(submitErrorMessage(payload.error, payload));
       return false;
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (payload.submission?.travel_order_id) {
+      order.serverId = payload.submission.travel_order_id;
+    }
+    if (payload.submission?.approver_user_id) {
+      order.approval = order.approval || {};
+      order.approval.approverUserId = payload.submission.approver_user_id;
     }
     await refreshNotificationBadge();
     return true;
@@ -2458,6 +3508,146 @@ async function submitOrderForApproval(order) {
     alert("Předání ke schválení se nepodařilo.");
     return false;
   }
+}
+
+function normalizeRouteLinesForSubmit(order) {
+  const lines = [];
+  for (const [index, line] of (order.routeLines || []).entries()) {
+    const startAt = String(line.startAt || "").trim();
+    const endAt = String(line.endAt || "").trim();
+    const hasContent = routeLineHasBusinessContent(line);
+
+    if (!hasContent && startAt && !endAt) continue;
+    if (!hasContent && !startAt && !endAt) continue;
+    if (!startAt || !endAt) {
+      return {
+        ok: false,
+        lines,
+        message: `Úsek ${index + 1} nemá vyplněné datum/čas odjezdu i příjezdu.`,
+      };
+    }
+    const startKey = dateMinuteKey(startAt);
+    const endKey = dateMinuteKey(endAt);
+    if (startKey === null || endKey === null) {
+      return {
+        ok: false,
+        lines,
+        message: `Úsek ${index + 1} má neplatný datum/čas odjezdu nebo příjezdu.`,
+      };
+    }
+    if (endKey < startKey) {
+      return {
+        ok: false,
+        lines,
+        message: `Úsek ${index + 1} má příjezd dříve než odjezd.`,
+      };
+    }
+    if ((line.segmentType || "domestic") === "foreign" && !line.countryCode) {
+      return {
+        ok: false,
+        lines,
+        message: `Úsek ${index + 1} je zahraniční, ale nemá vybranou zemi.`,
+      };
+    }
+    lines.push(line);
+  }
+
+  if (!lines.length) {
+    return {
+      ok: false,
+      lines,
+      message: "Doplň alespoň jeden úplný řádek vyúčtování cesty.",
+    };
+  }
+
+  const tripDateValidation = validateTripDatesAgainstRouteLines(order.trip || {}, lines);
+  if (!tripDateValidation.ok) {
+    return { ...tripDateValidation, lines };
+  }
+
+  return { ok: true, lines };
+}
+
+function validateTripDatesAgainstRouteLines(trip, lines) {
+  const headerStartKey = dateMinuteKey(trip.startAt);
+  const headerEndKey = dateMinuteKey(trip.endAt);
+  if (headerStartKey === null || headerEndKey === null) {
+    return {
+      ok: false,
+      message: "V hlavičce doplň datum/čas začátku i konce pracovní cesty.",
+    };
+  }
+  if (headerEndKey < headerStartKey) {
+    return {
+      ok: false,
+      message: "V hlavičce je konec pracovní cesty dříve než začátek.",
+    };
+  }
+
+  let firstStartKey = null;
+  let firstStartValue = "";
+  let lastEndKey = null;
+  let lastEndValue = "";
+  lines.forEach((line) => {
+    const startKey = dateMinuteKey(line.startAt);
+    const endKey = dateMinuteKey(line.endAt);
+    if (firstStartKey === null || startKey < firstStartKey) {
+      firstStartKey = startKey;
+      firstStartValue = line.startAt;
+    }
+    if (lastEndKey === null || endKey > lastEndKey) {
+      lastEndKey = endKey;
+      lastEndValue = line.endAt;
+    }
+  });
+
+  if (headerStartKey !== firstStartKey || headerEndKey !== lastEndKey) {
+    return {
+      ok: false,
+      message: `Datumy v hlavičce neodpovídají položkám. V hlavičce má být ${formatDateTime(firstStartValue)} až ${formatDateTime(lastEndValue)}. Použij tlačítko "Převzít první a poslední čas" a odešli znovu.`,
+    };
+  }
+  return { ok: true };
+}
+
+function dateMinuteKey(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.floor(date.getTime() / 60000);
+}
+
+function routeLineHasBusinessContent(line) {
+  return Boolean(
+    String(line.from || "").trim() ||
+    String(line.to || "").trim() ||
+    String(line.company || "").trim() ||
+    String(line.purpose || "").trim() ||
+    String(line.countryCode || "").trim() ||
+    number(line.km) ||
+    number(line.fare) ||
+    number(line.lodging) ||
+    number(line.other) ||
+    number(line.freeMeals)
+  );
+}
+
+function submitErrorMessage(code, payload = {}) {
+  if (code === "missing_approver") return "Nejdřív musí být nastavený schvalovatel.";
+  if (code === "self_approval_not_allowed") return "Vlastní cestovní příkaz nejde schválit sám sobě.";
+  if (code === "approver_not_available") return "Vybraný schvalovatel není pro tohoto zaměstnance povolený.";
+  if (code === "invalid_approver") return "Vybraný schvalovatel není platný.";
+  if (code === "missing_route_lines") return "Doplň alespoň jeden úplný řádek vyúčtování cesty.";
+  if (code === "route_line_missing_dates") return `Úsek ${payload.line || ""} nemá vyplněné datum/čas odjezdu i příjezdu.`;
+  if (code === "route_line_missing_foreign_country") return `Úsek ${payload.line || ""} je zahraniční, ale nemá vybranou zemi.`;
+  if (code === "route_line_invalid_dates") return `Úsek ${payload.line || ""} má neplatný datum/čas odjezdu nebo příjezdu.`;
+  if (code === "route_line_invalid_range") return `Úsek ${payload.line || ""} má příjezd dříve než odjezd.`;
+  if (code === "missing_trip_dates") return "V hlavičce doplň datum/čas začátku i konce pracovní cesty.";
+  if (code === "trip_dates_invalid_range") return "V hlavičce je konec pracovní cesty dříve než začátek.";
+  if (code === "trip_dates_mismatch") {
+    return `Datumy v hlavičce neodpovídají položkám. V hlavičce má být ${formatDateTime(payload.expectedStartAt)} až ${formatDateTime(payload.expectedEndAt)}. Použij tlačítko "Převzít první a poslední čas" a odešli znovu.`;
+  }
+  return code || "Předání ke schválení se nepodařilo.";
 }
 
 function applyWorkflowAction(order, action) {
@@ -2473,6 +3663,7 @@ function applyWorkflowAction(order, action) {
 
   if (!nextStatus) return;
   order.status = nextStatus;
+  if (action === "submit" || action === "reopen") delete order.returnNotice;
   if (action === "settlement") activeTab = "settlement";
   if (action === "close") activeTab = "summary";
   order.history.push({
@@ -2563,11 +3754,21 @@ async function addAttachmentFiles(order, input) {
 
 function attachmentMetaFromSection(section) {
   const value = (field) => section?.querySelector(`[data-attachment-meta="${field}"]`)?.value || "";
+  const currencyCode = normalizeCurrencyCode(value("currencyCode"));
+  const exchangeRate = currencyCode === "CZK" ? 1 : positiveNumber(value("exchangeRate"), 1);
+  const amount = number(value("amount"));
+  const heliosExpenseCodeId = value("heliosExpenseCodeId");
+  const heliosExpenseCode = foreignTravelState.expenseCodes.find((code) => String(code.id) === String(heliosExpenseCodeId));
   return {
     expenseKind: value("expenseKind") || "other",
+    heliosExpenseCodeId: heliosExpenseCodeId ? Number(heliosExpenseCodeId) : "",
+    heliosExpenseCodeLabel: heliosExpenseCode?.label || "",
     documentKind: value("documentKind") || "receipt",
     documentDate: value("documentDate") || todayString(),
-    amount: number(value("amount")),
+    amount,
+    currencyCode,
+    exchangeRate,
+    amountCzk: Math.round(amount * exchangeRate * 100) / 100,
     description: value("description"),
   };
 }
@@ -2607,7 +3808,9 @@ function updateSummaryValues(order, calc) {
     totalTransport: formatCurrency(calc.totalTransport),
     totalMeals: formatCurrency(calc.totalMeals),
     totalLodging: formatCurrency(calc.totalLodging),
+    totalLineOther: formatCurrency(calc.totalLineOther),
     totalOther: formatCurrency(calc.totalOther),
+    totalAttachmentExpenses: formatCurrency(calc.totalAttachmentExpenses),
     advance: formatCurrency(calc.advance),
   };
 
@@ -2631,14 +3834,18 @@ function updateOverview(order) {
 
 function calculateOrder(order) {
   const lines = order.routeLines.map((line) => calculateLine(order, line));
+  const attachmentTotals = calculateAttachmentTotals(order);
   const totalKm = sum(lines, "km");
   const totalHours = sum(lines, "hours");
   const totalMeals = sum(lines, "meal");
   const totalFare = sum(lines, "fare");
+  const totalBasicKmComp = sum(lines, "basicKmComp");
+  const totalFuel = sum(lines, "fuelComp");
   const totalPrivateComp = sum(lines, "privateComp");
   const totalTransport = totalFare + totalPrivateComp;
   const totalLodging = sum(lines, "lodging");
-  const totalOther = sum(lines, "other");
+  const totalLineOther = sum(lines, "other");
+  const totalOther = totalLineOther + attachmentTotals.totalCzk;
   const totalGross = totalTransport + totalMeals + totalLodging + totalOther;
   const advance = number(order.trip.advance);
   const balance = totalGross - advance;
@@ -2649,10 +3856,15 @@ function calculateOrder(order) {
     totalHours,
     totalMeals,
     totalFare,
+    totalBasicKmComp,
+    totalFuel,
     totalPrivateComp,
     totalTransport,
     totalLodging,
+    totalLineOther,
     totalOther,
+    totalAttachmentExpenses: attachmentTotals.totalCzk,
+    attachmentExpenses: attachmentTotals.items,
     totalGross,
     advance,
     balance,
@@ -2660,14 +3872,38 @@ function calculateOrder(order) {
   };
 }
 
+function calculateAttachmentTotals(order) {
+  const attachments = Array.isArray(order.attachments) ? order.attachments : [];
+  const items = attachments.map((attachment) => ({
+    id: attachment.id || "",
+    expenseKind: attachment.expenseKind || "other",
+    currencyCode: normalizeCurrencyCode(attachment.currencyCode),
+    amount: number(attachment.amount),
+    exchangeRate: attachmentExchangeRate(attachment),
+    amountCzk: attachmentAmountCzk(attachment),
+  }));
+  return {
+    items,
+    totalCzk: sum(items, "amountCzk"),
+  };
+}
+
 function calculateLine(order, line) {
+  const isPrivateSegment = (line.segmentType || "domestic") === "private";
+  const isForeignSegment = (line.segmentType || "domestic") === "foreign";
   const hours = hoursBetween(line.startAt, line.endAt);
   const km = number(line.km);
-  const fare = number(line.fare);
-  const lodging = number(line.lodging);
-  const other = number(line.other);
-  const meal = mealAllowance(hours, number(line.freeMeals));
-  const privateComp = line.transport === "private_car" ? km * getPrivateKmRate(order) : 0;
+  const fare = isPrivateSegment ? 0 : number(line.fare);
+  const lodging = isPrivateSegment ? 0 : number(line.lodging);
+  const other = isPrivateSegment ? 0 : number(line.other);
+  const meal = isPrivateSegment
+    ? { base: 0, reduction: 0, amount: 0, currency: "CZK", exchangeRate: 1, foreignAmount: 0 }
+    : isForeignSegment
+      ? foreignMealAllowance(line, number(line.freeMeals))
+      : mealAllowance(hours, number(line.freeMeals));
+  const basicKmComp = !isPrivateSegment && line.transport === "private_car" ? km * getBasicKmRate(order) : 0;
+  const fuelComp = !isPrivateSegment && line.transport === "private_car" ? km * getFuelKmRate(order) : 0;
+  const privateComp = basicKmComp + fuelComp;
   const total = fare + lodging + other + meal.amount + privateComp;
 
   return {
@@ -2679,8 +3915,29 @@ function calculateLine(order, line) {
     meal: meal.amount,
     mealBase: meal.base,
     mealReduction: meal.reduction,
+    mealCurrency: meal.currency || "CZK",
+    mealExchangeRate: meal.exchangeRate || 1,
+    mealForeignAmount: meal.foreignAmount || 0,
+    basicKmComp,
+    fuelComp,
     privateComp,
     total,
+  };
+}
+
+function foreignMealAllowance(line, freeMeals) {
+  const base = number(line.foreignMealRate);
+  const exchangeRate = positiveNumber(line.foreignExchangeRate, 1);
+  const meals = Math.max(0, Math.min(3, Math.round(freeMeals || 0)));
+  const reduction = Math.min(base, base * 0.25 * meals);
+  const foreignAmount = Math.max(0, base - reduction);
+  return {
+    base,
+    reduction,
+    amount: Math.round(foreignAmount * exchangeRate * 100) / 100,
+    currency: normalizeCurrencyCode(line.foreignCurrencyCode || "EUR"),
+    exchangeRate,
+    foreignAmount,
   };
 }
 
@@ -2704,13 +3961,20 @@ function getMealBand(hours) {
 }
 
 function getPrivateKmRate(order) {
-  const basic = number(order.vehicle.basicKmRate || state.rates.basicKmRate);
+  return getBasicKmRate(order) + getFuelKmRate(order);
+}
+
+function getBasicKmRate(order) {
+  return number(order.vehicle.basicKmRate || state.rates.basicKmRate);
+}
+
+function getFuelKmRate(order) {
   const consumption = number(order.vehicle.consumption);
   const fuelPrice = number(order.vehicle.fuelPrice || state.rates.fuelPrices[order.vehicle.fuelType]);
   const secondaryFuelType = order.vehicle.secondaryFuelType;
   const secondaryConsumption = secondaryFuelType ? number(order.vehicle.secondaryConsumption) : 0;
   const secondaryFuelPrice = secondaryFuelType ? number(order.vehicle.secondaryFuelPrice || state.rates.fuelPrices[secondaryFuelType]) : 0;
-  return basic + (consumption / 100) * fuelPrice + (secondaryConsumption / 100) * secondaryFuelPrice;
+  return (consumption / 100) * fuelPrice + (secondaryConsumption / 100) * secondaryFuelPrice;
 }
 
 function createBlankOrder() {
@@ -2730,6 +3994,9 @@ function createBlankOrder() {
       companions: "",
       startAt: "",
       endAt: "",
+      currencyCode: "CZK",
+      exchangeRate: 1,
+      exchangeRateDate: "",
       expectedExpense: 0,
       advance: 0,
       reportDate: todayString(),
@@ -2746,7 +4013,7 @@ function orderDefaults() {
   const employee = currentDefaults?.employee || {};
   const vehicle = currentDefaults?.vehicle || {};
   const route = currentDefaults?.route || {};
-  const approver = currentDefaults?.approver || (currentDefaults?.approvers || []).find((item) => item.is_default) || {};
+  const approver = defaultOrderApprover() || {};
   const fuelType = FUEL_OPTIONS[vehicle.fuelType] ? vehicle.fuelType : "ba95";
   const secondaryFuelType = FUEL_OPTIONS[vehicle.secondaryFuelType] ? vehicle.secondaryFuelType : "";
 
@@ -2809,8 +4076,11 @@ function applyMissingDefaults(order) {
   const defaults = orderDefaults();
   let changed = false;
   changed = fillMissing(order.employee, defaults.employee, ["organization", "name", "personalNo", "address", "costCenter", "department", "phone", "workStart", "workEnd"]) || changed;
+  order.trip = order.trip || {};
+  changed = fillMissing(order.trip, { currencyCode: "CZK", exchangeRate: 1, exchangeRateDate: "" }, ["currencyCode", "exchangeRate", "exchangeRateDate"]) || changed;
   changed = fillMissing(order.vehicle, defaults.vehicle, ["id", "brand", "plate", "engineVolume", "fuelType", "consumption", "fuelPriceMode", "fuelPrice", "secondaryFuelType", "secondaryConsumption", "secondaryFuelPriceMode", "secondaryFuelPrice", "basicKmRate"]) || changed;
   order.approval = order.approval || {};
+  changed = normalizeOrderApprover(order) || changed;
   changed = fillMissing(order.approval, defaults.approval, ["approverUserId", "approverName"]) || changed;
   if (!Array.isArray(order.attachments)) {
     order.attachments = [];
@@ -2818,6 +4088,12 @@ function applyMissingDefaults(order) {
   }
 
   const firstLine = order.routeLines?.[0];
+  (order.routeLines || []).forEach((line) => {
+    if (!line.countryCode) line.countryCode = "";
+    if (!line.foreignCurrencyCode) line.foreignCurrencyCode = "";
+    if (line.foreignMealRate === undefined) line.foreignMealRate = 0;
+    if (line.foreignExchangeRate === undefined) line.foreignExchangeRate = 1;
+  });
   if (firstLine && (!firstLine.transport || firstLine.transport === "private_car") && firstLine.transport !== defaults.routeTransport) {
     firstLine.transport = defaults.routeTransport;
     changed = true;
@@ -2825,6 +4101,21 @@ function applyMissingDefaults(order) {
 
   if (changed) touch(order);
   return changed;
+}
+
+function normalizeOrderApprover(order) {
+  const approvers = orderApproverOptions();
+  const fallback = defaultOrderApprover();
+  order.approval = order.approval || {};
+  const currentId = order.approval.approverUserId || "";
+  const isValid = currentId && approvers.some((approver) => approver.id === currentId);
+  if (isValid) return false;
+
+  order.approval = {
+    approverUserId: fallback?.id || "",
+    approverName: fallback?.name || fallback?.display_name || "",
+  };
+  return Boolean(currentId || fallback);
 }
 
 function fillMissing(target, source, fields) {
@@ -2868,6 +4159,14 @@ function createBlankLine(transport = null) {
     endAt: "",
     company: "",
     purpose: "",
+    segmentType: "domestic",
+    countryCode: "",
+    countryName: "",
+    foreignCurrencyCode: "",
+    foreignMealRate: 0,
+    foreignExchangeRate: 1,
+    foreignExchangeRateDate: "",
+    foreignMealAmountCzk: 0,
     km: 0,
     transport: transport || orderDefaults().routeTransport,
     fare: 0,
@@ -2875,6 +4174,59 @@ function createBlankLine(transport = null) {
     other: 0,
     freeMeals: 0,
   };
+}
+
+function createNextLine(order) {
+  const previous = Array.isArray(order?.routeLines) ? order.routeLines.at(-1) : null;
+  const next = createBlankLine(previous?.transport || orderDefaults().routeTransport);
+  if (!previous) return next;
+
+  next.startAt = previous.endAt || "";
+  next.from = previous.to || "";
+  next.segmentType = SEGMENT_TYPE_OPTIONS[previous.segmentType] ? previous.segmentType : "domestic";
+  if (next.segmentType === "foreign") {
+    applyForeignCountryToLine(next, previous.countryCode || foreignTravelState.countries[0]?.code || "");
+  }
+  return next;
+}
+
+function applyForeignCountryToLine(line, countryCode) {
+  const country = foreignTravelState.countries.find((item) => item.code === countryCode) || foreignTravelState.countries[0];
+  if (!country) return;
+  line.countryCode = country.code || "";
+  line.countryName = country.label || country.code || "";
+  line.foreignCurrencyCode = normalizeCurrencyCode(country.currencyCode);
+  line.foreignMealRate = number(country.mealRate);
+  line.foreignExchangeRate = positiveNumber(country.exchangeRate, 1);
+  line.foreignExchangeRateDate = country.exchangeRateDate || "";
+  line.foreignMealAmountCzk = Math.round(line.foreignMealRate * line.foreignExchangeRate * 100) / 100;
+}
+
+function clearForeignLine(line) {
+  line.countryCode = "";
+  line.countryName = "";
+  line.foreignCurrencyCode = "";
+  line.foreignMealRate = 0;
+  line.foreignExchangeRate = 1;
+  line.foreignExchangeRateDate = "";
+  line.foreignMealAmountCzk = 0;
+}
+
+function refreshForeignLinesForOrder(order) {
+  (order.routeLines || []).forEach((line) => {
+    if ((line.segmentType || "domestic") === "foreign") {
+      applyForeignCountryToLine(line, line.countryCode || foreignTravelState.countries[0]?.code || "");
+    }
+  });
+}
+
+async function refreshTripExchangeRate(order) {
+  order.trip = order.trip || {};
+  const currency = normalizeCurrencyCode(order.trip.currencyCode || "CZK");
+  const rate = await fetchExchangeRate(currency, order.trip.startAt || todayString());
+  order.trip.currencyCode = currency;
+  order.trip.exchangeRate = positiveNumber(rate.exchangeRate, 1);
+  order.trip.exchangeRateDate = normalizeDateOnly(rate.exchangeRateDate) || normalizeDateOnly(order.trip.startAt) || todayString();
 }
 
 function generateNumber() {
@@ -2927,6 +4279,33 @@ function number(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function positiveNumber(value, fallback = 1) {
+  const parsed = number(value);
+  return parsed > 0 ? parsed : fallback;
+}
+
+function normalizeCurrencyCode(value) {
+  const code = String(value || "CZK").trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : "CZK";
+}
+
+function attachmentExchangeRate(attachment) {
+  const currencyCode = normalizeCurrencyCode(attachment?.currencyCode);
+  if (currencyCode === "CZK") return 1;
+  return positiveNumber(attachment?.exchangeRate, 1);
+}
+
+function attachmentAmountCzk(attachment) {
+  const explicit = number(attachment?.amountCzk);
+  if (explicit > 0) return explicit;
+  return Math.round(number(attachment?.amount) * attachmentExchangeRate(attachment) * 100) / 100;
+}
+
+function formatAttachmentAmount(attachment) {
+  const currencyCode = normalizeCurrencyCode(attachment?.currencyCode);
+  return formatCurrency(number(attachment?.amount), currencyCode);
+}
+
 function sum(items, key) {
   return items.reduce((total, item) => total + number(item[key]), 0);
 }
@@ -2940,10 +4319,10 @@ function hoursBetween(start, end) {
   return diff / 36e5;
 }
 
-function formatCurrency(value) {
+function formatCurrency(value, currency = "CZK") {
   return new Intl.NumberFormat("cs-CZ", {
     style: "currency",
-    currency: "CZK",
+    currency: normalizeCurrencyCode(currency),
     maximumFractionDigits: 2,
   }).format(number(value));
 }
@@ -2963,6 +4342,12 @@ function formatDateTime(value) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(date);
+}
+
+function normalizeDateOnly(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : "";
 }
 
 function formatBytes(value) {
@@ -3036,6 +4421,7 @@ function renderPrintSheet(order) {
       <tr>
         <td>${escapeHtml(formatDateTime(line.startAt))}<br />${escapeHtml(line.from || "")}</td>
         <td>${escapeHtml(formatDateTime(line.endAt))}<br />${escapeHtml(line.to || "")}</td>
+        <td>${escapeHtml(segmentTypeLabel(line.segmentType))}</td>
         <td>${escapeHtml(TRANSPORT_OPTIONS[line.transport] || "")}</td>
         <td>${formatNumber(lineCalc.km, 0)}</td>
         <td>${formatCurrency(lineCalc.fare + lineCalc.privateComp)}</td>
@@ -3058,7 +4444,7 @@ function renderPrintSheet(order) {
       <div class="print-line"><strong>Počátek:</strong> ${escapeHtml(formatDateTime(order.trip.startAt))}</div>
       <div class="print-line"><strong>Konec:</strong> ${escapeHtml(formatDateTime(order.trip.endAt))}</div>
       <div class="print-line"><strong>Místo jednání:</strong> ${escapeHtml(order.trip.destination)}</div>
-      <div class="print-line"><strong>Stav:</strong> ${escapeHtml(STATUS_OPTIONS.find((item) => item.value === order.status)?.label || order.status)}</div>
+      <div class="print-line"><strong>Stav:</strong> ${escapeHtml(STATUS_OPTIONS.find((item) => item.value === effectiveOrderStatus(order))?.label || effectiveOrderStatus(order))}</div>
     </div>
     <div class="print-line"><strong>Účel cesty:</strong> ${escapeHtml(order.trip.purpose)}</div>
     <div class="print-line"><strong>Spolucestující:</strong> ${escapeHtml(order.trip.companions)}</div>
@@ -3068,6 +4454,7 @@ function renderPrintSheet(order) {
         <tr>
           <th>Odjezd</th>
           <th>Příjezd</th>
+          <th>Typ</th>
           <th>Doprava</th>
           <th>km</th>
           <th>Cestovné</th>

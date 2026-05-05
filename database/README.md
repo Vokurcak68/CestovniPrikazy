@@ -30,3 +30,10 @@ Pohledy:
 - `travel.v_approver_pending_orders`
 - `travel.v_approver_dashboard`
 - `travel.v_user_notification_badge`
+
+## Další migrace
+
+Migrace `006_registration_and_erp_sync.sql` doplňuje samoobslužnou registraci:
+
+- `travel.app_user.email_verified_at`,
+- `travel.email_verification_token`.

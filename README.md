@@ -12,7 +12,8 @@ Autonomní prototyp aplikace pro zadávání a schvalování tuzemských cestovn
 
 1. Vytvoř PostgreSQL databázi podle `database/README.md`.
 2. Spusť migrace ze složky `database/migrations`.
-3. Spusť backend:
+3. Zkopíruj `.env.example` do `.env` a doplň lokální hesla. Soubor `.env` se necommituje.
+4. Spusť backend:
 
 ```powershell
 .\travel-orders-server\start-local.ps1
@@ -29,3 +30,8 @@ Pro testování z telefonu spusť server na hostu `0.0.0.0` a otevři lokální 
 ## Stav prototypu
 
 Aplikace zatím běží autonomně bez přímého napojení na Helios Inuvio/MSSQL. Databázová struktura a uživatelské profily jsou připravené tak, aby šla později doplnit synchronizace uživatelů, číselníků a export cestovních příkazů.
+
+Aktuálně je připravená samoobslužná registrace s ověřením e-mailu a ruční synchronizace profilu/vozidel z Helios view:
+
+- `hvw_vok_Oresi_CPUzivatele` podle `Cislo = osobní číslo`,
+- `hvw_vok_Oresi_CPAuta` podle `CisloRidic = osobní číslo`.

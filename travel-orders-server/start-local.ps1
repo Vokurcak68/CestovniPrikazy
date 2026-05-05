@@ -1,5 +1,17 @@
 $ErrorActionPreference = "Stop"
 
+$envFile = Join-Path $PSScriptRoot "..\.env"
+if (Test-Path $envFile) {
+  Get-Content $envFile | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("=")) { return }
+    $name, $value = $line.Split("=", 2)
+    if (-not [Environment]::GetEnvironmentVariable($name, "Process")) {
+      [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+  }
+}
+
 $env:TRAVEL_DB_HOST = if ($env:TRAVEL_DB_HOST) { $env:TRAVEL_DB_HOST } else { "localhost" }
 $env:TRAVEL_DB_PORT = if ($env:TRAVEL_DB_PORT) { $env:TRAVEL_DB_PORT } else { "5432" }
 $env:TRAVEL_DB_NAME = if ($env:TRAVEL_DB_NAME) { $env:TRAVEL_DB_NAME } else { "travel_orders" }

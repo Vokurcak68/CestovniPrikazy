@@ -8,6 +8,7 @@ CREATE SCHEMA IF NOT EXISTS travel;
 DO $$ BEGIN CREATE TYPE travel.user_source AS ENUM ('local', 'helios', 'mixed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE travel.order_status AS ENUM ('draft', 'submitted', 'approved', 'settlement', 'closed', 'rejected', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE travel.transport_kind AS ENUM ('private_car', 'company_car', 'public_transport', 'taxi', 'plane', 'other'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE travel.route_segment_type AS ENUM ('private', 'domestic', 'foreign'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE travel.approval_status AS ENUM ('pending', 'approved', 'returned', 'rejected', 'cancelled', 'skipped'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE travel.notification_status AS ENUM ('queued', 'sent', 'read', 'failed', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE travel.notification_channel AS ENUM ('in_app', 'email', 'webhook'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -231,12 +232,23 @@ CREATE TABLE IF NOT EXISTS travel.vehicle (
   is_private boolean NOT NULL DEFAULT true,
   is_default boolean NOT NULL DEFAULT false,
   helios_id text UNIQUE,
+  source_system travel.user_source NOT NULL DEFAULT 'local',
+  helios_export_status travel.export_status NOT NULL DEFAULT 'not_ready',
+  helios_export_requested_at timestamptz,
+  helios_exported_at timestamptz,
+  helios_export_failed_at timestamptz,
+  helios_export_error text,
+  helios_export_travel_order_id uuid,
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS ix_vehicle_owner ON travel.vehicle(owner_user_id);
+
+CREATE INDEX IF NOT EXISTS ix_vehicle_helios_export_status
+ON travel.vehicle(helios_export_status, helios_export_requested_at)
+WHERE is_active;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_vehicle_default_per_owner
 ON travel.vehicle(owner_user_id)
@@ -357,6 +369,13 @@ CREATE INDEX IF NOT EXISTS ix_travel_order_owner_status ON travel.travel_order(o
 CREATE INDEX IF NOT EXISTS ix_travel_order_approver_status ON travel.travel_order(current_approver_user_id, status);
 CREATE INDEX IF NOT EXISTS ix_travel_order_status_updated ON travel.travel_order(status, updated_at DESC);
 
+ALTER TABLE travel.vehicle
+  DROP CONSTRAINT IF EXISTS fk_vehicle_helios_export_travel_order;
+
+ALTER TABLE travel.vehicle
+  ADD CONSTRAINT fk_vehicle_helios_export_travel_order
+  FOREIGN KEY (helios_export_travel_order_id) REFERENCES travel.travel_order(id) ON DELETE SET NULL;
+
 DROP TRIGGER IF EXISTS trg_travel_order_touch ON travel.travel_order;
 CREATE TRIGGER trg_travel_order_touch
 BEFORE UPDATE ON travel.travel_order
@@ -372,6 +391,14 @@ CREATE TABLE IF NOT EXISTS travel.travel_route_line (
   end_at timestamptz,
   company_or_place text,
   purpose text,
+  segment_type travel.route_segment_type NOT NULL DEFAULT 'domestic',
+  foreign_country_code text,
+  foreign_country_name text,
+  foreign_meal_currency char(3),
+  foreign_meal_rate numeric(14,2),
+  foreign_exchange_rate numeric(14,6),
+  foreign_exchange_rate_date date,
+  foreign_meal_amount_czk numeric(14,2),
   transport_kind travel.transport_kind NOT NULL DEFAULT 'private_car',
   vehicle_id uuid REFERENCES travel.vehicle(id),
   km numeric(12,2) NOT NULL DEFAULT 0,
@@ -423,6 +450,11 @@ CREATE TABLE IF NOT EXISTS travel.travel_attachment (
   description text,
   document_date date,
   amount numeric(14,2),
+  currency_code char(3) NOT NULL DEFAULT 'CZK',
+  exchange_rate numeric(14,6) NOT NULL DEFAULT 1,
+  amount_czk numeric(14,2),
+  helios_expense_code_id integer,
+  helios_expense_code_label text,
   file_name text NOT NULL,
   content_type text,
   byte_size bigint,
@@ -671,7 +703,8 @@ FROM travel.approval_request ar
 JOIN travel.travel_order o ON o.id = ar.travel_order_id
 JOIN travel.app_user requester ON requester.id = o.owner_user_id
 LEFT JOIN travel.travel_order_total totals ON totals.travel_order_id = o.id
-WHERE ar.status = 'pending';
+WHERE ar.status = 'pending'
+  AND o.owner_user_id <> ar.approver_user_id;
 
 CREATE OR REPLACE VIEW travel.v_approver_dashboard AS
 SELECT

@@ -1,12 +1,17 @@
 # Runtime and local machine state
 .env
 .env.*
+!.env.example
 *.log
+.tmp-*.json
 __pycache__/
 *.py[cod]
 
 # Local uploads and generated attachments
 travel-order-attachments/
+
+# Local Helios scripts with embedded service tokens
+docs/*.local.sql
 
 # Verification screenshots generated during UI work
 *.png
