@@ -1,0 +1,44 @@
+# Runtime and local machine state
+.env
+.env.*
+!.env.example
+*.log
+.tmp-*.json
+__pycache__/
+*.py[cod]
+
+# Backup files
+*.bak
+*.bak_*
+
+# Local uploads and generated attachments
+travel-order-attachments/
+
+# Local Helios scripts with embedded service tokens
+docs/*.local.sql
+
+# Verification screenshots generated during UI work
+*.png
+!travel-orders-app/assets/oresi-logo.png
+!travel-orders-app/assets/zynaptec-logo.png
+
+# Temporary files created while extracting/verifying brand assets
+travel-orders-app/assets/oresi-source.pdf
+travel-orders-app/assets/oresi-source-page1-preview.png
+travel-orders-app/assets/pdf-image-*.tif
+travel-orders-app/assets/pdf-image-*.jpg
+
+# Python virtual environment
+.venv/
+venv/
+
+# Backup directories
+*__backup*/
+*__auto_backup*/
+SAFE_BACKUP/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+nul
