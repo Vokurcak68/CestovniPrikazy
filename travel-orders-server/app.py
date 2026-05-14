@@ -10,6 +10,7 @@ import re
 import secrets
 import smtplib
 import subprocess
+import sys
 import unicodedata
 import uuid
 from datetime import datetime, timezone
@@ -123,17 +124,23 @@ def run_psql_json(sql: str, variables: dict[str, object] | None = None):
     env["PGPASSWORD"] = DB_PASSWORD
     env["PGCLIENTENCODING"] = "UTF8"
 
-    result = subprocess.run(
-        command,
-        input=rendered_sql,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=env,
-        timeout=20,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            input=rendered_sql,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=20,
+        )
+    except Exception as e:
+        raise DatabaseError(f"Database command failed: {str(e)}")
+
     if result.returncode != 0:
-        raise DatabaseError(result.stderr.strip() or "Database command failed.")
+        error_msg = result.stderr.strip() if result.stderr else "Database command failed."
+        raise DatabaseError(error_msg)
 
     output = result.stdout.strip()
     if not output:
@@ -286,33 +293,85 @@ def build_verification_url(token: str) -> str:
 
 def send_verification_email(email: str, display_name: str, verification_url: str) -> bool:
     if not SMTP_HOST:
+        print("ERROR: SMTP_HOST is not configured")
         return False
 
-    message = EmailMessage()
-    message["Subject"] = "Ověření účtu pro Cestovní příkazy"
-    message["From"] = SMTP_FROM
-    message["To"] = email
-    greeting = display_name or email
-    message.set_content(
-        "\n".join(
+    try:
+        message = EmailMessage()
+        message["Subject"] = "Ověření účtu pro Cestovní příkazy"
+        message["From"] = SMTP_FROM
+        message["To"] = email
+        message.set_charset("utf-8")
+
+        greeting = display_name or email
+
+        # Plain text version
+        text_content = "\n".join(
             [
                 f"Dobrý den, {greeting},",
                 "",
                 "pro dokončení registrace do aplikace Cestovní příkazy otevřete tento odkaz:",
+                "",
                 verification_url,
                 "",
                 "Odkaz platí 24 hodin.",
+                "",
+                "S pozdravem,",
+                "Tým Cestovní příkazy",
             ]
         )
-    )
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
-        if SMTP_TLS:
-            smtp.starttls()
-        if SMTP_USER:
-            smtp.login(SMTP_USER, SMTP_PASSWORD)
-        smtp.send_message(message)
-    return True
+        # HTML version
+        html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #2c3e50;">Ověření účtu pro Cestovní příkazy</h2>
+        <p>Dobrý den, <strong>{greeting}</strong>,</p>
+        <p>pro dokončení registrace do aplikace Cestovní příkazy klikněte na tlačítko níže:</p>
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{verification_url}"
+               style="display: inline-block; padding: 12px 30px; background-color: #3498db;
+                      color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                Ověřit účet
+            </a>
+        </div>
+        <p style="color: #7f8c8d; font-size: 14px;">
+            Nebo zkopírujte tento odkaz do prohlížeče:<br>
+            <a href="{verification_url}" style="color: #3498db; word-break: break-all;">{verification_url}</a>
+        </p>
+        <p style="color: #7f8c8d; font-size: 14px;">Odkaz platí 24 hodin.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="color: #95a5a6; font-size: 12px;">
+            S pozdravem,<br>
+            Tým Cestovní příkazy
+        </p>
+    </div>
+</body>
+</html>
+        """
+
+        message.set_content(text_content)
+        message.add_alternative(html_content, subtype="html")
+
+        print(f"Attempting to send verification email to {email} via {SMTP_HOST}:{SMTP_PORT}")
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
+            if SMTP_TLS:
+                print("Starting TLS...")
+                smtp.starttls()
+            if SMTP_USER:
+                print(f"Logging in as {SMTP_USER}...")
+                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            smtp.send_message(message)
+        print(f"Verification email sent successfully to {email}")
+        return True
+    except Exception as e:
+        print(f"ERROR sending verification email to {email}: {type(e).__name__}: {str(e)}")
+        return False
 
 
 def send_app_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
@@ -449,7 +508,7 @@ def require_helios_preview_access(fn):
     def wrapper(*args, **kwargs):
         user = get_helios_access_user(allow_query_token=True)
         if not user:
-            return Response("NeoprĂˇvnÄ›nĂ˝ pĹ™Ă­stup k nĂˇhledu cestovnĂ­ho pĹ™Ă­kazu.", status=401, mimetype="text/plain")
+            return Response("Neoprávněný přístup k náhledu cestovního příkazu.", status=401, mimetype="text/plain")
         request.current_user = user
         return fn(*args, **kwargs)
 
@@ -649,15 +708,15 @@ def verify_email():
     """
     result = run_psql_json(sql, {"token_hash": hashed}) or {}
     if not result.get("verified"):
-        return "OvÄ›Ĺ™ovacĂ­ odkaz je neplatnĂ˝ nebo vyprĹˇel.", 400
+        return "Ověřovací odkaz je neplatný nebo vypršel.", 400
     return """
       <!doctype html>
       <meta charset="utf-8">
-      <title>E-mail ovÄ›Ĺ™en</title>
+      <title>E-mail ověřen</title>
       <body style="font-family:Segoe UI,Arial,sans-serif;padding:32px">
-        <h1>E-mail je ovÄ›Ĺ™enĂ˝</h1>
-        <p>ĂšÄŤet je aktivnĂ­. MĹŻĹľeĹˇ se pĹ™ihlĂˇsit do aplikace CestovnĂ­ pĹ™Ă­kazy.</p>
-        <p><a href="/">PĹ™ejĂ­t do aplikace</a></p>
+        <h1>E-mail je ověřený</h1>
+        <p>Účet je aktivní. Můžeš se přihlásit do aplikace Cestovní příkazy.</p>
+        <p><a href="/">Přejít do aplikace</a></p>
       </body>
     """
 
@@ -1266,10 +1325,13 @@ def approver_dashboard():
       SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb)::text
       FROM (
         SELECT
+          v.item_type,
           v.approval_request_id::text,
           v.travel_order_id::text,
+          v.travel_request_id::text,
           COALESCE(ar.stage::text, 'manager') AS stage,
-          v.order_no,
+          v.item_no AS order_no,
+          v.item_status,
           v.purpose,
           v.destination,
           v.requester_name,
@@ -1281,6 +1343,7 @@ def approver_dashboard():
         FROM travel.v_approver_pending_orders v
         LEFT JOIN travel.approval_request ar ON ar.id = v.approval_request_id
         WHERE v.approver_user_id = :'user_id'::uuid
+          AND v.item_type = 'order'
         ORDER BY is_overdue DESC, due_at NULLS LAST, requested_at
         LIMIT 50
       ) t;
@@ -1296,12 +1359,15 @@ def approver_dashboard():
 @app.get("/api/travel-orders/my/statuses")
 @require_auth
 def my_travel_order_statuses():
+    user_id = request.current_user["user_id"]
     sql = """
       SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY t."updatedAt" DESC), '[]'::jsonb)::text
       FROM (
         SELECT
           o.id::text AS "travelOrderId",
           o.order_no AS "orderNo",
+          o.owner_user_id::text AS "ownerUserId",
+          o.travel_request_id::text AS "travelRequestId",
           o.status::text AS status,
           o.export_status::text AS "exportStatus",
           total.calculation_snapshot AS "calculationSnapshot",
@@ -1314,13 +1380,14 @@ def my_travel_order_statuses():
           o.rejected_at AS "rejectedAt",
           o.updated_at AS "updatedAt",
           latest_approval.status::text AS "approvalStatus",
+          latest_approval.stage::text AS "approvalStage",
           latest_approval.decided_at AS "approvalDecidedAt",
           latest_approval.decision_comment AS "approvalDecisionComment"
         FROM travel.travel_order o
         LEFT JOIN travel.travel_order_total total ON total.travel_order_id = o.id
         LEFT JOIN travel.app_user current_approver ON current_approver.id = o.current_approver_user_id
         LEFT JOIN LATERAL (
-          SELECT ar.status, ar.decided_at, ar.decision_comment
+          SELECT ar.status, ar.decided_at, ar.decision_comment, ar.stage
           FROM travel.approval_request ar
           WHERE ar.travel_order_id = o.id
           ORDER BY COALESCE(ar.decided_at, ar.requested_at) DESC
@@ -1329,7 +1396,12 @@ def my_travel_order_statuses():
         WHERE o.owner_user_id = :'user_id'::uuid
       ) t;
     """
-    return jsonify(run_psql_json(sql, {"user_id": request.current_user["user_id"]}))
+    result = run_psql_json(sql, {"user_id": user_id})
+    print(f"DEBUG my_travel_order_statuses: user_id={user_id}, returned {len(result) if isinstance(result, list) else 'non-list'} orders")
+    if isinstance(result, list):
+        for order in result:
+            print(f"  - Order {order.get('orderNo')}: ownerUserId={order.get('ownerUserId')}")
+    return jsonify(result)
 
 
 @app.post("/api/travel-requests")
@@ -1341,6 +1413,7 @@ def save_travel_request():
     purpose = str(payload.get("purpose") or "").strip()
     start_at = str(payload.get("startAt") or "").strip()
     end_at = str(payload.get("endAt") or "").strip()
+    transport = str(payload.get("transport") or "").strip()
     approver_user_id = valid_uuid(payload.get("approverUserId"))
 
     if not destination:
@@ -1359,7 +1432,7 @@ def save_travel_request():
       WITH saved AS (
         INSERT INTO travel.travel_request(
           id, request_no, owner_user_id, approver_user_id,
-          destination, start_at, end_at, purpose, status
+          destination, start_at, end_at, purpose, transport, status
         )
         VALUES (
           COALESCE(NULLIF(:'request_id', '')::uuid, gen_random_uuid()),
@@ -1370,6 +1443,7 @@ def save_travel_request():
           :'start_at'::timestamptz,
           :'end_at'::timestamptz,
           :'purpose',
+          NULLIF(:'transport', ''),
           'draft'
         )
         ON CONFLICT (id) DO UPDATE
@@ -1378,6 +1452,7 @@ def save_travel_request():
             start_at = EXCLUDED.start_at,
             end_at = EXCLUDED.end_at,
             purpose = EXCLUDED.purpose,
+            transport = EXCLUDED.transport,
             updated_at = now()
         WHERE travel.travel_request.owner_user_id = :'owner_user_id'::uuid
           AND travel.travel_request.status IN ('draft', 'rejected')
@@ -1400,6 +1475,7 @@ def save_travel_request():
             "start_at": start_at,
             "end_at": end_at,
             "purpose": purpose,
+            "transport": transport,
         },
     )
     if not saved or not saved.get("id"):
@@ -1497,6 +1573,7 @@ def my_travel_requests():
           r.start_at AS "startAt",
           r.end_at AS "endAt",
           r.purpose AS purpose,
+          r.transport AS transport,
           r.approver_user_id::text AS "approverUserId",
           a.display_name AS "approverName",
           r.submitted_at AS "submittedAt",
@@ -1525,6 +1602,7 @@ def my_approved_requests_without_order():
           r.start_at AS "startAt",
           r.end_at AS "endAt",
           r.purpose,
+          r.transport,
           r.approved_at AS "approvedAt"
         FROM travel.travel_request r
         LEFT JOIN travel.travel_order o ON o.travel_request_id = r.id
@@ -1540,7 +1618,7 @@ def my_approved_requests_without_order():
 @require_auth
 def pending_travel_requests():
     user_id = request.current_user["user_id"]
-    can_review_any = has_role(request.current_user, "admin") or has_role(request.current_user, "accountant")
+    can_review_any = has_role(request.current_user, "admin")
     sql = """
       SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY t."submittedAt" ASC), '[]'::jsonb)::text
       FROM (
@@ -1554,6 +1632,7 @@ def pending_travel_requests():
           r.start_at AS "startAt",
           r.end_at AS "endAt",
           r.purpose,
+          r.transport,
           r.submitted_at AS "submittedAt"
         FROM travel.travel_request r
         JOIN travel.app_user owner ON owner.id = r.owner_user_id
@@ -1706,6 +1785,8 @@ def approval_request_detail(approval_request_id):
             'id', order_row.id::text,
             'number', order_row.order_no,
             'status', order_row.status,
+            'approvalStage', selected.stage::text,
+            'travelRequestId', order_row.travel_request_id::text,
             'purpose', order_row.purpose,
             'destination', order_row.destination,
             'visitedCompanies', order_row.visited_companies,
@@ -2073,11 +2154,11 @@ def helios_order_preview():
     import_id = valid_uuid(request.args.get("importId") or request.args.get("id") or request.args.get("travelOrderId"))
     helios_id = str(request.args.get("heliosId") or request.args.get("tabICestakId") or "").strip()
     if not import_id and not re.fullmatch(r"\d{1,20}", helios_id):
-        return Response("ChybĂ­ nebo je neplatnĂ˝ ImportId.", status=400, mimetype="text/plain")
+        return Response("Chybí nebo je neplatný ImportId.", status=400, mimetype="text/plain")
 
     order = load_helios_preview_order(import_id) if import_id else load_helios_preview_order_by_helios_id(helios_id)
     if not order:
-        return Response("CestovnĂ­ pĹ™Ă­kaz nebyl nalezen.", status=404, mimetype="text/plain")
+        return Response("Cestovní příkaz nebyl nalezen.", status=404, mimetype="text/plain")
 
     return Response(render_helios_preview_html(order), mimetype="text/html; charset=utf-8")
 
@@ -2109,7 +2190,7 @@ def helios_order_preview_attachment(travel_order_id, attachment_id):
     target = (ATTACHMENT_DIR / attachment["storage_key"]).resolve()
     attachment_root = ATTACHMENT_DIR.resolve()
     if attachment_root not in target.parents or not target.exists():
-        return Response("Soubor pĹ™Ă­lohy nebyl nalezen.", status=404, mimetype="text/plain")
+        return Response("Soubor přílohy nebyl nalezen.", status=404, mimetype="text/plain")
 
     return send_file(
         target,
@@ -2301,12 +2382,12 @@ def load_helios_preview_order_by_helios_id(helios_id: str) -> dict | None:
 def render_helios_preview_html(order: dict) -> str:
     token = str(request.args.get("token") or "").strip()
     order_id = str(order.get("id") or "")
-    title = f"NĂˇhled cestovnĂ­ho pĹ™Ă­kazu {order.get('orderNo') or ''}".strip()
+    title = f"Náhled cestovního příkazu {order.get('orderNo') or ''}".strip()
     attachment_count = len(order.get("attachments") or [])
     rows = "".join(render_preview_route_line(line) for line in order.get("routeLines") or [])
     attachments = "".join(render_preview_attachment(order_id, token, attachment) for attachment in order.get("attachments") or [])
     if not attachments:
-        attachments = '<p class="muted">K cestovnĂ­mu pĹ™Ă­kazu nejsou pĹ™iloĹľenĂ© doklady.</p>'
+        attachments = '<p class="muted">K cestovnímu příkazu nejsou přiložené doklady.</p>'
 
     totals = order.get("totals") or {}
     employee = order.get("employee") or {}
@@ -2477,36 +2558,36 @@ def render_helios_preview_html(order: dict) -> str:
   <main>
     <header>
       <div>
-        <p class="brand">Oresi Â· CestovnĂ­ pĹ™Ă­kazy</p>
-        <h1>{escape_html(order.get("orderNo") or "Bez ÄŤĂ­sla")}</h1>
-        <p class="muted">{escape_html(trip.get("purpose") or "Bez ĂşÄŤelu")} Â· {escape_html(trip.get("destination") or "Bez cĂ­le")}</p>
+        <p class="brand">Oresi · Cestovní příkazy</p>
+        <h1>{escape_html(order.get("orderNo") or "Bez čísla")}</h1>
+        <p class="muted">{escape_html(trip.get("purpose") or "Bez účelu")} · {escape_html(trip.get("destination") or "Bez cíle")}</p>
       </div>
-      <div class="status">{escape_html(status_label(order.get("status")))} Â· {escape_html(export_status_label(order.get("exportStatus")))}</div>
+      <div class="status">{escape_html(status_label(order.get("status")))} · {escape_html(export_status_label(order.get("exportStatus")))}</div>
     </header>
 
     <section class="grid">
       <article class="card wide">
-        <h2>ZamÄ›stnanec</h2>
+        <h2>Zaměstnanec</h2>
         <dl>
-          {preview_field("JmĂ©no", employee.get("displayName"))}
-          {preview_field("OsobnĂ­ ÄŤĂ­slo", employee.get("personalNumber"))}
-          {preview_field("OvÄ›Ĺ™eno v ERP", "ano" if employee.get("personalNumberVerifiedFromErp") else "ne")}
+          {preview_field("Jméno", employee.get("displayName"))}
+          {preview_field("Osobní číslo", employee.get("personalNumber"))}
+          {preview_field("Ověřeno v ERP", "ano" if employee.get("personalNumberVerifiedFromErp") else "ne")}
           {preview_field("E-mail", employee.get("email"))}
           {preview_field("Organizace", employee.get("organization"))}
-          {preview_field("StĹ™edisko", join_nonempty(employee.get("costCenterCode"), employee.get("costCenterName")))}
+          {preview_field("Středisko", join_nonempty(employee.get("costCenterCode"), employee.get("costCenterName")))}
           {preview_field("Adresa", employee.get("address"))}
         </dl>
       </article>
 
       <article class="card wide">
-        <h2>Cesta a schvĂˇlenĂ­</h2>
+        <h2>Cesta a schválení</h2>
         <dl>
           {preview_field("Od", format_datetime(trip.get("plannedStartAt")))}
           {preview_field("Do", format_datetime(trip.get("plannedEndAt")))}
-          {preview_field("NavĹˇtĂ­venĂ© firmy", trip.get("visitedCompanies"))}
-          {preview_field("SpolucestujĂ­cĂ­", trip.get("companions"))}
+          {preview_field("Navštívené firmy", trip.get("visitedCompanies"))}
+          {preview_field("Spolucestující", trip.get("companions"))}
           {preview_field("Schvalovatel", approval.get("name"))}
-          {preview_field("SchvĂˇleno", format_datetime(approval.get("decidedAt") or order.get("approvedAt")))}
+          {preview_field("Schváleno", format_datetime(approval.get("decidedAt") or order.get("approvedAt")))}
         </dl>
       </article>
 
@@ -2514,10 +2595,10 @@ def render_helios_preview_html(order: dict) -> str:
         <h2>Souhrn</h2>
         <div class="kpis">
           {preview_kpi("Km", format_number(totals.get("totalKm"), 0))}
-          {preview_kpi("CestovnĂ©", format_money(totals.get("transportAmount")))}
-          {preview_kpi("StravnĂ©", format_money(totals.get("mealAmount")))}
-          {preview_kpi("OstatnĂ­ + doklady", format_money(totals.get("otherAmount")))}
-          {preview_kpi("K vĂ˝platÄ›", format_money(totals.get("balanceRounded")))}
+          {preview_kpi("Cestovné", format_money(totals.get("transportAmount")))}
+          {preview_kpi("Stravné", format_money(totals.get("mealAmount")))}
+          {preview_kpi("Ostatní + doklady", format_money(totals.get("otherAmount")))}
+          {preview_kpi("K výplatě", format_money(totals.get("balanceRounded")))}
         </div>
       </article>
 
@@ -2527,36 +2608,36 @@ def render_helios_preview_html(order: dict) -> str:
           {preview_field("Popis", vehicle.get("brand"))}
           {preview_field("SPZ", vehicle.get("plate"))}
           {preview_field("Palivo", vehicle.get("fuelType"))}
-          {preview_field("SpotĹ™eba", vehicle.get("consumption"))}
+          {preview_field("Spotřeba", vehicle.get("consumption"))}
           {preview_field("Cena PHM", format_money(vehicle.get("fuelPrice")) if vehicle.get("fuelPrice") not in (None, "") else "")}
           {preview_field("Helios ID", vehicle.get("heliosId"))}
         </dl>
       </article>
 
       <article class="card wide">
-        <h2>ImportnĂ­ kontrola</h2>
+        <h2>Importní kontrola</h2>
         <dl>
           {preview_field("ImportId", order_id)}
-          {preview_field("Helios cestĂˇk ID", order.get("heliosDocumentId"))}
-          {preview_field("NaimportovĂˇno", format_datetime(order.get("heliosExportedAt")))}
-          {preview_field("PoÄŤet pĹ™Ă­loh", attachment_count)}
+          {preview_field("Helios cesták ID", order.get("heliosDocumentId"))}
+          {preview_field("Naimportováno", format_datetime(order.get("heliosExportedAt")))}
+          {preview_field("Počet příloh", attachment_count)}
         </dl>
       </article>
 
       <article class="card full">
-        <h2>ĹĂˇdky vyĂşÄŤtovĂˇnĂ­</h2>
+        <h2>Řádky vyúčtování</h2>
         <table>
           <thead>
             <tr>
-              <th>#</th><th>Typ</th><th>Odjezd</th><th>PĹ™Ă­jezd</th><th>Odkud</th><th>Kam</th><th>Doprava</th><th>Km</th><th>Celkem</th>
+              <th>#</th><th>Typ</th><th>Odjezd</th><th>Příjezd</th><th>Odkud</th><th>Kam</th><th>Doprava</th><th>Km</th><th>Celkem</th>
             </tr>
           </thead>
-          <tbody>{rows or '<tr><td colspan="9" class="muted">Nejsou zadanĂ© ĹľĂˇdnĂ© Ĺ™Ăˇdky.</td></tr>'}</tbody>
+          <tbody>{rows or '<tr><td colspan="9" class="muted">Nejsou zadané žádné řádky.</td></tr>'}</tbody>
         </table>
       </article>
 
       <article class="card full">
-        <h2>Doklady a pĹ™Ă­lohy</h2>
+        <h2>Doklady a přílohy</h2>
         <div class="attachments">{attachments}</div>
       </article>
     </section>
@@ -2656,55 +2737,55 @@ def format_money(value: object, currency: object = "CZK") -> str:
 
 def status_label(value: object) -> str:
     return {
-        "draft": "RozpracovĂˇno",
-        "submitted": "Ke schvĂˇlenĂ­",
-        "approved": "SchvĂˇleno",
-        "settlement": "VyĂşÄŤtovĂˇnĂ­",
-        "closed": "UzavĹ™eno",
-        "rejected": "ZamĂ­tnuto",
-        "cancelled": "ZruĹˇeno",
+        "draft": "Rozpracováno",
+        "submitted": "Ke schválení",
+        "approved": "Schváleno",
+        "settlement": "Vyúčtování",
+        "closed": "Uzavřeno",
+        "rejected": "Zamítnuto",
+        "cancelled": "Zrušeno",
     }.get(str(value or ""), str(value or ""))
 
 
 def export_status_label(value: object) -> str:
     return {
-        "not_ready": "NepĹ™ipraveno",
-        "ready": "PĹ™ipraveno",
-        "queued": "Ve frontÄ›",
-        "exported": "NaimportovĂˇno",
+        "not_ready": "Nepřipraveno",
+        "ready": "Připraveno",
+        "queued": "Ve frontě",
+        "exported": "Naimportováno",
         "failed": "Chyba importu",
-        "cancelled": "ZruĹˇeno",
+        "cancelled": "Zrušeno",
     }.get(str(value or ""), str(value or ""))
 
 
 def segment_type_label(value: object) -> str:
-    return {"private": "SoukromĂ˝", "domestic": "TuzemskĂ˝", "foreign": "ZahraniÄŤnĂ­"}.get(str(value or ""), str(value or ""))
+    return {"private": "Soukromý", "domestic": "Tuzemský", "foreign": "Zahraniční"}.get(str(value or ""), str(value or ""))
 
 
 def transport_label(value: object) -> str:
     return {
-        "private_car": "SoukromĂ© vozidlo",
-        "company_car": "SluĹľebnĂ­ vozidlo",
-        "public_transport": "VeĹ™ejnĂˇ doprava",
+        "private_car": "Soukromé vozidlo",
+        "company_car": "Služební vozidlo",
+        "public_transport": "Veřejná doprava",
         "taxi": "Taxi",
         "plane": "Letadlo",
-        "other": "JinĂ©",
+        "other": "Jiné",
     }.get(str(value or ""), str(value or ""))
 
 
 def expense_kind_label(value: object) -> str:
     return {
         "fuel": "PHM / energie",
-        "fare": "JĂ­zdnĂ©",
-        "lodging": "UbytovĂˇnĂ­",
-        "parking": "ParkovnĂ©",
-        "meal": "StravovĂˇnĂ­",
-        "other": "OstatnĂ­ vĂ˝daj",
+        "fare": "Jízdné",
+        "lodging": "Ubytování",
+        "parking": "Parkovné",
+        "meal": "Stravování",
+        "other": "Ostatní výdaj",
     }.get(str(value or ""), str(value or ""))
 
 
 def document_kind_label(value: object) -> str:
-    return {"receipt": "ĂšÄŤtenka", "invoice": "Faktura", "ticket": "JĂ­zdenka", "other": "JinĂ˝ doklad"}.get(str(value or ""), str(value or ""))
+    return {"receipt": "Účtenka", "invoice": "Faktura", "ticket": "Jízdenka", "other": "Jiný doklad"}.get(str(value or ""), str(value or ""))
 
 
 @app.get("/api/helios/import-candidates")
@@ -3633,18 +3714,18 @@ def admin_user_options():
         ) r),
         'transportKinds', jsonb_build_array(
           jsonb_build_object('code', 'private_car', 'name', 'VlastnĂ­ vozidlo'),
-          jsonb_build_object('code', 'company_car', 'name', 'SluĹľebnĂ­ vozidlo'),
-          jsonb_build_object('code', 'public_transport', 'name', 'VeĹ™ejnĂˇ doprava'),
+          jsonb_build_object('code', 'company_car', 'name', 'Služební vozidlo'),
+          jsonb_build_object('code', 'public_transport', 'name', 'Veřejná doprava'),
           jsonb_build_object('code', 'taxi', 'name', 'Taxi'),
           jsonb_build_object('code', 'plane', 'name', 'Letadlo'),
-          jsonb_build_object('code', 'other', 'name', 'JinĂ©')
+          jsonb_build_object('code', 'other', 'name', 'Jiné')
         ),
         'fuelTypes', jsonb_build_array(
           jsonb_build_object('code', 'ba95', 'name', 'Benzin 95'),
           jsonb_build_object('code', 'ba98', 'name', 'Benzin 98'),
           jsonb_build_object('code', 'diesel', 'name', 'Nafta'),
           jsonb_build_object('code', 'electricity', 'name', 'ElektĹ™ina'),
-          jsonb_build_object('code', 'other', 'name', 'JinĂ©')
+          jsonb_build_object('code', 'other', 'name', 'Jiné')
         ),
         'approvers', COALESCE((SELECT jsonb_agg(to_jsonb(a) ORDER BY display_name) FROM (
           SELECT DISTINCT
@@ -3800,13 +3881,14 @@ def admin_update_user(user_id):
 @app.delete("/api/admin/users/<user_id>")
 @require_role("admin")
 def admin_delete_user(user_id):
-    actor_user_id = str((request.current_user or {}).get("user_id") or "")
-    if not user_id:
-        return jsonify({"error": "missing_user_id"}), 400
-    if actor_user_id and actor_user_id == user_id:
-        return jsonify({"error": "cannot_delete_self"}), 400
+    try:
+        actor_user_id = str((request.current_user or {}).get("user_id") or "")
+        if not user_id:
+            return jsonify({"error": "missing_user_id"}), 400
+        if actor_user_id and actor_user_id == user_id:
+            return jsonify({"error": "cannot_delete_self"}), 400
 
-    sql = """
+        sql = """
       WITH target AS (
         SELECT id, source_system::text AS source_system, helios_user_id
         FROM travel.app_user
@@ -3847,15 +3929,35 @@ def admin_delete_user(user_id):
           (SELECT count(*) FROM deleted_identity) AS deleted_identity_count,
           (SELECT count(*) FROM deleted_user) AS deleted_user_count
       ) t;
-    """
-    result = run_psql_json(sql, {"user_id": user_id}) or {}
-    if int(result.get("found_count") or 0) == 0:
-        return jsonify({"error": "user_not_found"}), 404
-    if int(result.get("blocked_count") or 0) > 0:
-        return jsonify({"error": "erp_managed_user"}), 409
-    if int(result.get("deleted_user_count") or 0) == 0:
-        return jsonify({"error": "delete_failed"}), 409
-    return jsonify({"ok": True, "deleted_user_id": user_id})
+        """
+        result = run_psql_json(sql, {"user_id": user_id}) or {}
+        print(f"Delete user {user_id} result: {result}")
+        if int(result.get("found_count") or 0) == 0:
+            print(f"User {user_id} not found")
+            return jsonify({"error": "user_not_found"}), 404
+        if int(result.get("blocked_count") or 0) > 0:
+            print(f"User {user_id} is ERP-managed, cannot delete")
+            return jsonify({"error": "erp_managed_user"}), 409
+        if int(result.get("deleted_user_count") or 0) == 0:
+            print(f"Failed to delete user {user_id}")
+            return jsonify({"error": "delete_failed"}), 409
+        print(f"User {user_id} deleted successfully")
+        return jsonify({"ok": True, "deleted_user_id": user_id})
+    except Exception as e:
+        print(f"ERROR in admin_delete_user: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        # Check for foreign key constraint violations
+        error_msg = str(e).lower()
+        if "foreign key constraint" in error_msg or "still referenced" in error_msg:
+            if "travel_order" in error_msg:
+                return jsonify({"error": "user_has_travel_orders"}), 409
+            if "travel_request" in error_msg:
+                return jsonify({"error": "user_has_travel_requests"}), 409
+            return jsonify({"error": "user_has_references"}), 409
+
+        return jsonify({"error": "internal_error", "detail": str(e)}), 500
 
 
 def save_admin_user(payload: dict):
@@ -4196,6 +4298,7 @@ def submit_travel_order():
     payload = request.get_json(silent=True) or {}
     order = payload.get("order") or {}
     calc = payload.get("calculation") or {}
+    accountant_submit = bool(payload.get("accountantSubmit") or False)
     order_no = str(order.get("number") or "").strip()
     if not order_no:
         return jsonify({"error": "missing_order_number"}), 400
@@ -4208,10 +4311,9 @@ def submit_travel_order():
     request_check_sql = """
       SELECT COALESCE(to_jsonb(t), '{}'::jsonb)::text
       FROM (
-        SELECT id::text AS id
+        SELECT id::text AS id, owner_user_id::text
         FROM travel.travel_request
         WHERE id = :'request_id'::uuid
-          AND owner_user_id = :'owner_user_id'::uuid
           AND status = 'approved'
         LIMIT 1
       ) t;
@@ -4220,7 +4322,6 @@ def submit_travel_order():
         request_check_sql,
         {
             "request_id": travel_request_id,
-            "owner_user_id": request.current_user["user_id"],
         },
     )
     if not request_check or not request_check.get("id"):
@@ -4516,26 +4617,39 @@ def submit_travel_order():
         INSERT INTO travel.approval_request(
           travel_order_id, step_no, approver_user_id, status, requested_at, due_at, stage
         )
+        -- If accountant submits: create manager approval
+        SELECT
+          (SELECT id FROM saved_order),
+          2,
+          (SELECT approver_user_id FROM selected_approver),
+          'pending'::travel.approval_status,
+          now(),
+          now() + interval '2 days',
+          'manager'::travel.approval_stage
+        WHERE :'accountant_submit'::boolean
+        UNION ALL
+        -- If normal submit: create accounting approval for all accountants
         SELECT
           (SELECT id FROM saved_order),
           1,
           u.id,
-          'pending',
+          'pending'::travel.approval_status,
           now(),
           now() + interval '2 days',
-          'accounting'
+          'accounting'::travel.approval_stage
         FROM travel.app_user u
         JOIN travel.user_role ur ON ur.user_id = u.id
         JOIN travel.role r ON r.id = ur.role_id AND r.code = 'accountant'
         WHERE u.is_active
           AND u.id <> :'owner_user_id'::uuid
+          AND NOT :'accountant_submit'::boolean
         ON CONFLICT (travel_order_id, step_no, approver_user_id) DO UPDATE
-        SET status = 'pending',
+        SET status = 'pending'::travel.approval_status,
             requested_at = now(),
             due_at = now() + interval '2 days',
             decided_at = NULL,
             decision_comment = NULL,
-            stage = 'accounting'
+            stage = CASE WHEN :'accountant_submit'::boolean THEN 'manager'::travel.approval_stage ELSE 'accounting'::travel.approval_stage END
         RETURNING id, approver_user_id
       ),
       cancelled_other_approvals AS (
@@ -4647,12 +4761,14 @@ def submit_travel_order():
             }
         )
     snapshot = build_calculation_snapshot(order_for_save, calc)
-    result = run_psql_json(
-        sql,
-        {
+    try:
+        result = run_psql_json(
+            sql,
+            {
             "owner_user_id": request.current_user["user_id"],
             "travel_request_id": travel_request_id,
             "selected_approver_user_id": selected_approver_user_id,
+            "accountant_submit": accountant_submit,
             "order_no": order_no,
             "purpose": trip.get("purpose") or "",
             "destination": trip.get("destination") or "",
@@ -4675,8 +4791,14 @@ def submit_travel_order():
             "balance_amount": number_like(calc.get("balance")),
             "balance_rounded": number_like(calc.get("balanceRounded")),
             "calculation_snapshot": json.dumps(snapshot),
-        },
-    )
+            }
+        )
+    except DatabaseError as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Database error: {e}", file=sys.stderr)
+        print(f"accountant_submit: {accountant_submit}", file=sys.stderr)
+        raise
     if result and result.get("travel_order_id"):
         result["attachment_sync"] = save_order_attachments(
             result["travel_order_id"],
@@ -4690,6 +4812,55 @@ def submit_travel_order():
                 used_vehicle_id,
                 result["travel_order_id"],
             )
+
+        # Send email notification to approvers (accountants or manager)
+        approver_emails_sql = """
+          SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb)::text
+          FROM (
+            SELECT DISTINCT u.email::text AS email, u.display_name, ar.stage::text
+            FROM travel.approval_request ar
+            JOIN travel.app_user u ON u.id = ar.approver_user_id
+            WHERE ar.travel_order_id = :'travel_order_id'::uuid
+              AND ar.status = 'pending'
+              AND u.email IS NOT NULL
+          ) t;
+        """
+        approvers = run_psql_json(
+            approver_emails_sql,
+            {"travel_order_id": result["travel_order_id"]},
+        ) or []
+
+        emails_sent = []
+        email_errors = []
+        link = (APP_BASE_URL or request.url_root).rstrip("/") + "/approvals"
+        for approver in approvers:
+            to_email = str(approver.get("email") or "").strip()
+            stage = approver.get("stage")
+            if to_email:
+                if stage == "accounting":
+                    subject = f"Cestovní příkaz ke kontrole: {result.get('order_no')}"
+                    body = (
+                        f"Dobrý den,\n\n"
+                        f"byl vám přiřazen cestovní příkaz {result.get('order_no')} ke kontrole účetní.\n"
+                        f"Odkaz: {link}\n"
+                    )
+                else:  # manager stage
+                    subject = f"Cestovní příkaz ke schválení: {result.get('order_no')}"
+                    body = (
+                        f"Dobrý den,\n\n"
+                        f"byl vám přiřazen cestovní příkaz {result.get('order_no')} ke schválení.\n"
+                        f"Odkaz: {link}\n"
+                    )
+                sent, err = send_app_email(to_email, subject, body)
+                if sent:
+                    emails_sent.append(to_email)
+                elif err:
+                    email_errors.append({"email": to_email, "error": err})
+
+        result["emailsSent"] = emails_sent
+        if email_errors and EMAIL_DEV_MODE:
+            result["emailErrors"] = email_errors
+
     return jsonify({"submission": result})
 
 
@@ -4705,6 +4876,55 @@ def save_travel_order_draft():
     order_no = ensure_unique_order_number(str(order.get("number") or "").strip(), existing_order_id)
     trip = order.get("trip") or {}
     snapshot = build_calculation_snapshot(order, calc)
+
+    # Process route lines for draft (similar to submit but without validation)
+    raw_lines = order.get("routeLines") if isinstance(order.get("routeLines"), list) else []
+    raw_calc_lines = calc.get("lines") if isinstance(calc.get("lines"), list) else []
+    lines_payload = []
+    for index, line in enumerate(raw_lines):
+        if not isinstance(line, dict):
+            continue
+        line_calc = raw_calc_lines[index] if index < len(raw_calc_lines) and isinstance(raw_calc_lines[index], dict) else {}
+        segment_type = str(line.get("segmentType") or line.get("segment_type") or "domestic")
+        if segment_type not in ("domestic", "foreign", "foreign_with_per_diem"):
+            segment_type = "domestic"
+        lines_payload.append(
+            {
+                "start_at": line.get("startAt") or "",
+                "from_place": line.get("from") or "",
+                "to_place": line.get("to") or "",
+                "end_at": line.get("endAt") or "",
+                "company_or_place": line.get("company") or "",
+                "purpose": line.get("purpose") or "",
+                "segment_type": segment_type,
+                "foreign_country_code": line.get("countryCode") or "",
+                "foreign_country_name": line.get("countryName") or "",
+                "foreign_meal_currency": normalize_currency_code(line.get("foreignCurrencyCode")) if segment_type in ("foreign", "foreign_with_per_diem") else "",
+                "foreign_meal_rate": number_like(line.get("foreignMealRate")),
+                "foreign_exchange_rate": positive_number_like(line.get("foreignExchangeRate"), 1),
+                "foreign_exchange_rate_date": normalize_date_string(line.get("foreignExchangeRateDate")) or "",
+                "foreign_meal_amount_czk": number_like(line.get("foreignMealAmountCzk")),
+                "transport_kind": line.get("transport") or "private_car",
+                "km": number_like(line.get("km")),
+                "fare_amount": number_like(line.get("fare")),
+                "lodging_amount": number_like(line.get("lodging")),
+                "other_amount": number_like(line.get("other")),
+                "free_meals": int(float(number_like(line.get("freeMeals")))),
+                "calculated_hours": number_like(line_calc.get("hours")),
+                "calculated_meal_amount": number_like(line_calc.get("meal")),
+                "calculated_private_vehicle_amount": number_like(line_calc.get("privateComp")),
+                "calculated_total_amount": number_like(line_calc.get("total")),
+                "calculation_detail": {
+                    "mealBase": number_like(line_calc.get("mealBase")),
+                    "mealReduction": number_like(line_calc.get("mealReduction")),
+                    "mealCurrency": line_calc.get("mealCurrency") or ("CZK" if segment_type not in ("foreign", "foreign_with_per_diem") else normalize_currency_code(line.get("foreignCurrencyCode"))),
+                    "mealExchangeRate": number_like(line_calc.get("mealExchangeRate") or line.get("foreignExchangeRate") or 1),
+                    "mealForeignAmount": number_like(line_calc.get("mealForeignAmount") or 0),
+                    "basicKmRate": number_like((order.get("vehicle") or {}).get("basicKmRate")),
+                    "privateKmRate": number_like((order.get("vehicle") or {}).get("privateKmRate")),
+                },
+            }
+        )
 
     sql = """
       WITH saved_order AS (
@@ -4812,6 +5032,126 @@ def save_travel_order_draft():
             balance_rounded = EXCLUDED.balance_rounded,
             calculation_snapshot = EXCLUDED.calculation_snapshot,
             calculated_at = now()
+      ),
+      inserted_lines AS (
+        INSERT INTO travel.travel_route_line(
+          travel_order_id,
+          sequence_no,
+          start_at,
+          from_place,
+          to_place,
+          end_at,
+          company_or_place,
+          purpose,
+          segment_type,
+          foreign_country_code,
+          foreign_country_name,
+          foreign_meal_currency,
+          foreign_meal_rate,
+          foreign_exchange_rate,
+          foreign_exchange_rate_date,
+          foreign_meal_amount_czk,
+          transport_kind,
+          km,
+          fare_amount,
+          lodging_amount,
+          other_amount,
+          free_meals,
+          calculated_hours,
+          calculated_meal_amount,
+          calculated_private_vehicle_amount,
+          calculated_total_amount,
+          calculation_detail
+        )
+        SELECT
+          (SELECT id FROM saved_order),
+          row_number() OVER (),
+          NULLIF(line.start_at, '')::timestamptz,
+          NULLIF(line.from_place, ''),
+          NULLIF(line.to_place, ''),
+          NULLIF(line.end_at, '')::timestamptz,
+          NULLIF(line.company_or_place, ''),
+          NULLIF(line.purpose, ''),
+          COALESCE(NULLIF(line.segment_type, '')::travel.route_segment_type, 'domestic'),
+          NULLIF(line.foreign_country_code, ''),
+          NULLIF(line.foreign_country_name, ''),
+          NULLIF(line.foreign_meal_currency, ''),
+          COALESCE(line.foreign_meal_rate, 0),
+          COALESCE(line.foreign_exchange_rate, 1),
+          NULLIF(line.foreign_exchange_rate_date, '')::date,
+          COALESCE(line.foreign_meal_amount_czk, 0),
+          COALESCE(NULLIF(line.transport_kind, '')::travel.transport_kind, 'private_car'),
+          COALESCE(line.km, 0),
+          COALESCE(line.fare_amount, 0),
+          COALESCE(line.lodging_amount, 0),
+          COALESCE(line.other_amount, 0),
+          COALESCE(line.free_meals, 0),
+          COALESCE(line.calculated_hours, 0),
+          COALESCE(line.calculated_meal_amount, 0),
+          COALESCE(line.calculated_private_vehicle_amount, 0),
+          COALESCE(line.calculated_total_amount, 0),
+          COALESCE(line.calculation_detail, '{}'::jsonb)
+        FROM jsonb_to_recordset(:'lines'::jsonb) AS line(
+          start_at text,
+          from_place text,
+          to_place text,
+          end_at text,
+          company_or_place text,
+          purpose text,
+          segment_type text,
+          foreign_country_code text,
+          foreign_country_name text,
+          foreign_meal_currency text,
+          foreign_meal_rate numeric,
+          foreign_exchange_rate numeric,
+          foreign_exchange_rate_date text,
+          foreign_meal_amount_czk numeric,
+          transport_kind text,
+          km numeric,
+          fare_amount numeric,
+          lodging_amount numeric,
+          other_amount numeric,
+          free_meals integer,
+          calculated_hours numeric,
+          calculated_meal_amount numeric,
+          calculated_private_vehicle_amount numeric,
+          calculated_total_amount numeric,
+          calculation_detail jsonb
+        )
+        ON CONFLICT (travel_order_id, sequence_no) DO UPDATE
+        SET start_at = EXCLUDED.start_at,
+            from_place = EXCLUDED.from_place,
+            to_place = EXCLUDED.to_place,
+            end_at = EXCLUDED.end_at,
+            company_or_place = EXCLUDED.company_or_place,
+            purpose = EXCLUDED.purpose,
+            segment_type = EXCLUDED.segment_type,
+            foreign_country_code = EXCLUDED.foreign_country_code,
+            foreign_country_name = EXCLUDED.foreign_country_name,
+            foreign_meal_currency = EXCLUDED.foreign_meal_currency,
+            foreign_meal_rate = EXCLUDED.foreign_meal_rate,
+            foreign_exchange_rate = EXCLUDED.foreign_exchange_rate,
+            foreign_exchange_rate_date = EXCLUDED.foreign_exchange_rate_date,
+            foreign_meal_amount_czk = EXCLUDED.foreign_meal_amount_czk,
+            transport_kind = EXCLUDED.transport_kind,
+            km = EXCLUDED.km,
+            fare_amount = EXCLUDED.fare_amount,
+            lodging_amount = EXCLUDED.lodging_amount,
+            other_amount = EXCLUDED.other_amount,
+            free_meals = EXCLUDED.free_meals,
+            calculated_hours = EXCLUDED.calculated_hours,
+            calculated_meal_amount = EXCLUDED.calculated_meal_amount,
+            calculated_private_vehicle_amount = EXCLUDED.calculated_private_vehicle_amount,
+            calculated_total_amount = EXCLUDED.calculated_total_amount,
+            calculation_detail = EXCLUDED.calculation_detail,
+            updated_at = now()
+        RETURNING id
+      ),
+      trimmed_lines AS (
+        DELETE FROM travel.travel_route_line
+        WHERE travel_order_id = (SELECT id FROM saved_order)
+          AND sequence_no > jsonb_array_length(:'lines'::jsonb)
+        RETURNING id
       )
       SELECT to_jsonb(t)::text
       FROM (
@@ -4835,6 +5175,7 @@ def save_travel_order_draft():
             "expected_expense": number_like(trip.get("expectedExpense")),
             "advance_amount": number_like(trip.get("advance")),
             "currency_code": normalize_currency_code(trip.get("currencyCode")),
+            "lines": json.dumps(lines_payload),
             "total_km": number_like(calc.get("totalKm")),
             "total_hours": number_like(calc.get("totalHours")),
             "transport_amount": number_like(calc.get("totalTransport")),
@@ -4850,6 +5191,115 @@ def save_travel_order_draft():
     if not saved:
         return jsonify({"error": "save_draft_failed"}), 400
     return jsonify({"saved": saved})
+
+
+@app.get("/api/travel-orders/my/drafts")
+@require_auth
+def get_my_draft_orders():
+    """Load full draft order data including all details from calculation_snapshot"""
+    user_id = request.current_user["user_id"]
+
+    sql = """
+      SELECT COALESCE(json_agg(t ORDER BY t.updated_at DESC), '[]'::json)::text
+      FROM (
+        SELECT
+          o.id::text AS travel_order_id,
+          o.order_no,
+          o.status::text AS status,
+          o.created_at,
+          o.updated_at,
+          tot.calculation_snapshot
+        FROM travel.travel_order o
+        LEFT JOIN travel.travel_order_total tot ON tot.travel_order_id = o.id
+        WHERE o.owner_user_id = :'user_id'::uuid
+          AND o.status = 'draft'
+        ORDER BY o.updated_at DESC
+      ) t;
+    """
+
+    result = run_psql_json(sql, {"user_id": user_id})
+    drafts = result if isinstance(result, list) else []
+
+    # Transform the data to match frontend expectations
+    orders = []
+    for draft in drafts:
+        snapshot = draft.get("calculation_snapshot") or {}
+        order_data = snapshot.get("order") or {}
+        calc_data = snapshot.get("calculation") or {}
+
+        # Build the order object that the frontend expects
+        order = {
+            "id": "",  # Frontend will generate a new client-side ID
+            "serverId": draft.get("travel_order_id") or "",
+            "number": draft.get("order_no") or "",
+            "status": draft.get("status") or "draft",
+            "createdAt": draft.get("created_at") or "",
+            "updatedAt": draft.get("updated_at") or "",
+            "employee": order_data.get("employee") or {},
+            "trip": order_data.get("trip") or {},
+            "approval": order_data.get("approval") or {},
+            "vehicle": order_data.get("vehicle") or {},
+            "routeLines": order_data.get("routeLines") or [],
+            "attachments": order_data.get("attachments") or [],
+            "history": [{"at": draft.get("created_at") or "", "status": "draft", "note": "Založeno"}],
+        }
+        orders.append({"order": order, "calculation": calc_data})
+
+    return jsonify({"drafts": orders})
+
+
+@app.delete("/api/travel-orders/<travel_order_id>")
+@require_auth
+def delete_travel_order_draft(travel_order_id):
+    """Delete a draft travel order (only drafts can be deleted by owner)"""
+    order_id = valid_uuid(travel_order_id)
+    if not order_id:
+        return jsonify({"error": "invalid_travel_order_id"}), 400
+
+    user_id = request.current_user["user_id"]
+
+    sql = """
+      WITH target AS (
+        SELECT id, order_no, status::text
+        FROM travel.travel_order
+        WHERE id = :'order_id'::uuid
+          AND owner_user_id = :'user_id'::uuid
+        FOR UPDATE
+      ),
+      deleted AS (
+        DELETE FROM travel.travel_order
+        WHERE id = (SELECT id FROM target)
+          AND (SELECT status FROM target) = 'draft'
+        RETURNING id, order_no
+      )
+      SELECT to_jsonb(t)::text
+      FROM (
+        SELECT
+          COALESCE((SELECT id::text FROM deleted), '') as deleted_id,
+          COALESCE((SELECT order_no FROM deleted), '') as deleted_order_no,
+          (SELECT status FROM target) as original_status,
+          CASE
+            WHEN (SELECT id FROM deleted) IS NOT NULL THEN 'deleted'
+            WHEN (SELECT id FROM target) IS NULL THEN 'not_found'
+            WHEN (SELECT status FROM target) <> 'draft' THEN 'not_draft'
+            ELSE 'unknown_error'
+          END as result
+      ) t;
+    """
+
+    result = run_psql_json(sql, {"order_id": order_id, "user_id": user_id})
+
+    if not result:
+        return jsonify({"error": "delete_failed"}), 500
+
+    if result.get("result") == "deleted":
+        return jsonify({"deleted": True, "order_no": result.get("deleted_order_no")}), 200
+    elif result.get("result") == "not_found":
+        return jsonify({"error": "order_not_found"}), 404
+    elif result.get("result") == "not_draft":
+        return jsonify({"error": "cannot_delete_non_draft", "status": result.get("original_status")}), 400
+    else:
+        return jsonify({"error": "delete_failed"}), 500
 
 
 @app.post("/api/travel-orders/<travel_order_id>/return-to-draft")
@@ -5943,7 +6393,7 @@ def erp_employee_to_profile_payload(
     current_profile: dict | None = None,
 ) -> dict:
     profile = current_profile or {}
-    first_name = pick_erp_value(row, "Jmeno", "JmĂ©no", "KrestniJmeno", "KĹ™estnĂ­JmĂ©no")
+    first_name = pick_erp_value(row, "Jmeno", "Jméno", "KrestniJmeno", "KĹ™estnĂ­Jméno")
     last_name = pick_erp_value(row, "Prijmeni", "PĹ™Ă­jmenĂ­")
     title_before = pick_erp_value(row, "TitulPred", "TitulPĹ™ed")
     title_after = pick_erp_value(row, "TitulZa")
@@ -5953,13 +6403,13 @@ def erp_employee_to_profile_payload(
             row,
             "PrijmeniJmenoTituly",
             "CeleJmeno",
-            "CelĂ©JmĂ©no",
+            "CelĂ©Jméno",
             "JmenoPrijmeni",
-            "JmĂ©noPĹ™Ă­jmenĂ­",
+            "JménoPĹ™Ă­jmenĂ­",
             "Nazev",
             "NĂˇzev",
             "Zamestnanec",
-            "ZamÄ›stnanec",
+            "Zaměstnanec",
             "Pracovnik",
             "PracovnĂ­k",
         )
@@ -5983,8 +6433,8 @@ def erp_employee_to_profile_payload(
         "organization_name": organization_name or profile.get("organization_name") or "Oresi",
         "work_start": pick_erp_value(row, "PracovniDobaOd", "PracovnĂ­DobaOd", "WorkStart") or profile.get("work_start") or "08:00",
         "work_end": pick_erp_value(row, "PracovniDobaDo", "PracovnĂ­DobaDo", "WorkEnd") or profile.get("work_end") or "16:30",
-        "cost_center_code": pick_erp_value(row, "Stredisko", "StĹ™edisko", "KodStrediska", "KĂłdStĹ™ediska", "CisloStrediska", "ÄŚĂ­sloStĹ™ediska"),
-        "cost_center_name": pick_erp_value(row, "StrediskoNazev", "StĹ™ediskoNĂˇzev") or profile.get("cost_center_name") or "",
+        "cost_center_code": pick_erp_value(row, "Stredisko", "Středisko", "KodStrediska", "KĂłdStĹ™ediska", "CisloStrediska", "ÄŚĂ­sloStĹ™ediska"),
+        "cost_center_name": pick_erp_value(row, "StrediskoNazev", "StřediskoNĂˇzev") or profile.get("cost_center_name") or "",
         "department_name": "",
         "default_transport_kind": profile.get("default_transport_kind") or "private_car",
         "helios_employee_id": pick_erp_value(row, "ID", "Id", "HeliosID", "HeliosId", "Cislo", "ÄŚĂ­slo") or personal_number,
@@ -6022,8 +6472,8 @@ def erp_vehicle_to_payload(row: dict, personal_number: str, index: int) -> dict 
     vehicle_type = pick_erp_value(row, "TPTovZnacka", "Typ", "Model")
     if vehicle_type and vehicle_type not in brand:
         brand = " ".join(part for part in (brand, vehicle_type) if part)
-    consumption = pick_erp_value(row, "NorPHML", "Spotreba", "SpotĹ™eba", "SpotrebaPHM", "SpotĹ™ebaPHM", "SpotrebaL")
-    secondary_consumption = pick_erp_value(row, "NorPHMH", "Spotreba2", "SpotĹ™eba2", "SpotrebaEle", "SpotĹ™ebaEle", "SpotrebaKwh", "SpotĹ™ebaKwh")
+    consumption = pick_erp_value(row, "NorPHML", "Spotreba", "Spotřeba", "SpotrebaPHM", "SpotřebaPHM", "SpotrebaL")
+    secondary_consumption = pick_erp_value(row, "NorPHMH", "Spotreba2", "Spotřeba2", "SpotrebaEle", "SpotřebaEle", "SpotrebaKwh", "SpotřebaKwh")
     if not any((brand, plate, consumption, secondary_consumption)):
         return None
 

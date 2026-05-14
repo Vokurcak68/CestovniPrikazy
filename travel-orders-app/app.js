@@ -154,7 +154,6 @@ const els = {
   print: document.getElementById("printSheet"),
   search: document.getElementById("searchInput"),
   statusFilter: document.getElementById("statusFilter"),
-  newOrder: document.getElementById("newOrderBtn"),
   printBtn: document.getElementById("printBtn"),
   exportBtn: document.getElementById("exportBtn"),
   ordersMode: document.getElementById("ordersModeBtn"),
@@ -193,19 +192,19 @@ async function startApp() {
   await loadForeignTravelReference(todayString());
   await refreshOwnedOrderStatuses();
 
+  const removedOthers = removeOtherUsersOrders();
   const ownershipChanged = claimLegacyOrdersForCurrentUser();
   const accessibleOrders = visibleOrders();
   if (!accessibleOrders.length) {
-    const firstOrder = createBlankOrder();
-    state.orders.push(firstOrder);
-    state.selectedId = firstOrder.id;
-    saveState();
+    // Don't auto-create a blank order - user should create manually
+    state.selectedId = null;
+    if (removedOthers || ownershipChanged) saveState();
   } else if (!accessibleOrders.some((order) => order.id === state.selectedId)) {
     state.selectedId = accessibleOrders[0].id;
     saveState();
   } else {
     const defaultsChanged = applyDefaultsToExistingDraft();
-    if (ownershipChanged || defaultsChanged) saveState();
+    if (removedOthers || ownershipChanged || defaultsChanged) saveState();
   }
 
   if (!appStarted) {
@@ -216,18 +215,6 @@ async function startApp() {
       els.statusFilter.append(option);
     });
 
-    els.newOrder.addEventListener("click", async () => {
-      appMode = "orders";
-      const request = await pickApprovedRequestForNewOrder();
-      if (!request) return;
-      const order = createOrderFromRequest(request);
-      state.orders.unshift(order);
-      state.selectedId = order.id;
-      saveState();
-      queueDraftSync(order, true);
-      render();
-      resetViewportScroll();
-    });
 
     els.printBtn.addEventListener("click", () => {
       renderPrintSheet(getSelectedOrder());
@@ -296,7 +283,13 @@ async function startApp() {
 
   updateUserChrome();
   refreshNotificationBadge();
-  render();
+
+  // Set default mode for accountants to approvals
+  if (can("accountant") && !can("admin")) {
+    await setMode("approvals");
+  } else {
+    render();
+  }
 }
 
 function loadState() {
@@ -488,14 +481,12 @@ function normalizeIdentity(value) {
 function ownsOrder(order) {
   if (!API_ENABLED || !currentUser) return true;
   const userId = currentUserId();
-  if (order.ownerUserId) return order.ownerUserId === userId;
-
-  const legacyOrderLabels = [
-    order.employee?.personalNo,
-    order.employee?.name,
-  ].filter(Boolean).map(normalizeIdentity);
-  const labels = currentUserLabels();
-  return legacyOrderLabels.some((label) => labels.includes(label));
+  // Check if user owns the order
+  if (order.ownerUserId === userId) return true;
+  // Allow accountants to see orders they're reviewing (from approval detail)
+  // These orders are marked with a special flag when loaded for editing
+  if (can("accountant") && order._editingAsAccountant) return true;
+  return false;
 }
 
 function visibleOrders() {
@@ -510,11 +501,21 @@ function stampOrderOwner(order) {
   return order;
 }
 
+function removeOtherUsersOrders() {
+  if (!API_ENABLED || !currentUser) return false;
+  const beforeCount = state.orders.length;
+  state.orders = state.orders.filter(ownsOrder);
+  const afterCount = state.orders.length;
+  return beforeCount !== afterCount;
+}
+
 function claimLegacyOrdersForCurrentUser() {
   if (!API_ENABLED || !currentUser) return false;
   let changed = false;
   state.orders.forEach((order) => {
-    if (!order.ownerUserId && ownsOrder(order)) {
+    if (!order.ownerUserId) {
+      // Assign current user as owner of orders without ownerUserId
+      // This handles migration from old version
       stampOrderOwner(order);
       changed = true;
     }
@@ -922,7 +923,8 @@ async function logout() {
 function updateUserChrome() {
   if (!els.userInfo || !els.logoutBtn) return;
 
-  els.ordersMode.hidden = false;
+  // Hide orders mode for accountants who are not admins
+  els.ordersMode.hidden = can("accountant") && !can("admin");
   if (els.requestsMode) els.requestsMode.hidden = !API_ENABLED || !currentUser;
   els.profileMode.hidden = !API_ENABLED || !currentUser;
   els.approvalsMode.hidden = !API_ENABLED || !(can("approver") || can("admin") || can("accountant"));
@@ -988,7 +990,7 @@ function ensureRequestsModeButton() {
   btn.hidden = true;
   btn.title = "Žádosti o vycestování";
   btn.innerHTML = `<span aria-hidden="true">✉</span><span>Žádosti</span>`;
-  nav.insertBefore(btn, els.approvalsMode || els.profileMode || els.adminMode || els.newOrder);
+  nav.insertBefore(btn, els.approvalsMode || els.profileMode || els.adminMode || els.printBtn);
   els.requestsMode = btn;
 }
 
@@ -1046,6 +1048,7 @@ function createEmptyRequest() {
     startAt: "",
     endAt: "",
     purpose: "",
+    transport: "",
     approverUserId: defaultApprover?.id || "",
     approverName: defaultApprover?.name || "",
     status: "draft",
@@ -1154,6 +1157,26 @@ function createOrderFromRequest(requestItem) {
   return order;
 }
 
+async function createOrderFromApprovedRequest() {
+  const selectedRequest = getSelectedRequest();
+  if (!selectedRequest || selectedRequest.status !== "approved") {
+    alert("Vybraná žádost není schválená.");
+    return;
+  }
+
+  // Create order from the approved request
+  const order = createOrderFromRequest(selectedRequest);
+  state.orders.unshift(order);
+  state.selectedId = order.id;
+  saveState();
+  queueDraftSync(order, true);
+
+  // Switch to orders mode and render
+  appMode = "orders";
+  render();
+  resetViewportScroll();
+}
+
 function renderRequests() {
   const selected = getSelectedRequest() || createEmptyRequest();
   const approvers = orderApproverOptions();
@@ -1179,8 +1202,9 @@ function renderRequests() {
       <div class="form-header">
         <div><h2>Žádost o vycestování</h2></div>
         <div class="header-actions">
-          <button type="button" class="primary-btn" data-request-action="save">Uložit žádost</button>
-          ${selected.id ? `<button type="button" class="status-btn submitted" data-request-action="submit">Odeslat ke schválení</button>` : ""}
+          ${selected.status === "approved" ? `<button type="button" class="primary-btn" data-request-action="create-order">+ Založit cestovní příkaz</button>` : ""}
+          ${selected.status === "draft" || !selected.status ? `<button type="button" class="primary-btn" data-request-action="save">Uložit žádost</button>` : ""}
+          ${selected.id && selected.status !== "approved" ? `<button type="button" class="status-btn submitted" data-request-action="submit">Odeslat ke schválení</button>` : ""}
         </div>
       </div>
       ${requestState.message ? `<p class="inline-message">${escapeHtml(requestState.message)}</p>` : ""}
@@ -1189,6 +1213,13 @@ function renderRequests() {
         <label><span>Cíl cesty</span><input data-request-path="destination" type="text" value="${escapeHtml(selected.destination || "")}" /></label>
         <label><span>Odjezd</span><input data-request-path="startAt" type="date" value="${escapeHtml(requestDateValue(selected.startAt || ""))}" /></label>
         <label><span>Příjezd</span><input data-request-path="endAt" type="date" value="${escapeHtml(requestDateValue(selected.endAt || ""))}" /></label>
+        <label>
+          <span>Doprava</span>
+          <select data-request-path="transport">
+            <option value="">Vyber druh dopravy</option>
+            ${Object.entries(TRANSPORT_OPTIONS).map(([key, label]) => `<option value="${escapeHtml(key)}" ${key === (selected.transport || "") ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
+          </select>
+        </label>
         <label>
           <span>Schvalovatel</span>
           <select data-request-path="approverUserId">
@@ -1730,6 +1761,9 @@ function adminDeleteErrorMessage(code) {
   if (code === "cannot_delete_self") return "Nelze smazat právě přihlášeného uživatele.";
   if (code === "user_not_found") return "Uživatel nebyl nalezen.";
   if (code === "erp_managed_user") return "Uživatel je ověřený přes ERP/Helios a nelze ho smazat.";
+  if (code === "user_has_travel_orders") return "Uživatel má vytvořené cestovní příkazy a nelze ho smazat.";
+  if (code === "user_has_travel_requests") return "Uživatel má žádosti o vycestování a nelze ho smazat.";
+  if (code === "user_has_references") return "Uživatel má navázané záznamy v systému a nelze ho smazat.";
   if (code === "forbidden") return "Na tuto akci nemáš oprávnění.";
   return "Smazání uživatele se nepodařilo.";
 }
@@ -2264,26 +2298,82 @@ async function refreshOwnedOrderStatuses() {
   if (!API_ENABLED || !currentUser) return false;
 
   try {
-    const response = await apiFetch("/api/travel-orders/my/statuses");
-    if (!response.ok) return false;
-    const statuses = await response.json();
-    if (!Array.isArray(statuses)) return false;
+    // Load full draft orders from server
+    const draftsResponse = await apiFetch("/api/travel-orders/my/drafts");
+    const draftsPayload = draftsResponse.ok ? await draftsResponse.json().catch(() => ({})) : {};
+    const drafts = Array.isArray(draftsPayload.drafts) ? draftsPayload.drafts : [];
 
-    const byServerId = new Map(statuses.map((item) => [item.travelOrderId, item]));
+    // Load statuses for submitted/approved orders
+    const statusResponse = await apiFetch("/api/travel-orders/my/statuses");
+    const statuses = statusResponse.ok ? await statusResponse.json().catch(() => []) : [];
+
+    const byServerId = new Map([
+      ...drafts.map((d) => [d.order?.serverId, d]),
+      ...statuses.map((item) => [item.travelOrderId, item]),
+    ]);
     let changed = false;
 
+    // Remove orders that no longer exist on server
     state.orders = state.orders.filter((order) => {
+      // Always keep orders being edited by accountant
+      if (order._editingAsAccountant) return true;
       if (!ownsOrder(order)) return true;
       if (order.serverId) return byServerId.has(order.serverId);
-      return order.status === "draft";
+      return order.status === "draft" && !order.serverId; // Keep unsaved drafts
     });
 
+    // Load full draft orders
+    drafts.forEach((draftData) => {
+      const serverDraft = draftData.order || {};
+      const serverId = serverDraft.serverId;
+      if (!serverId) return;
+
+      let order = state.orders.find((item) => item.serverId && item.serverId === serverId);
+      if (!order) {
+        // Create order from full server data
+        order = {
+          id: newId(),
+          serverId,
+          number: serverDraft.number || generateNumber(),
+          status: "draft",
+          createdAt: serverDraft.createdAt || new Date().toISOString(),
+          updatedAt: serverDraft.updatedAt || new Date().toISOString(),
+          travelRequestId: serverDraft.travelRequestId || "",
+          employee: serverDraft.employee || {},
+          trip: serverDraft.trip || {},
+          approval: serverDraft.approval || {},
+          vehicle: serverDraft.vehicle || {},
+          routeLines: serverDraft.routeLines || [],
+          attachments: serverDraft.attachments || [],
+          history: serverDraft.history || [],
+        };
+        stampOrderOwner(order);
+        state.orders.unshift(order);
+        changed = true;
+      } else {
+        // Update existing draft with server data
+        Object.assign(order, {
+          number: serverDraft.number || order.number,
+          employee: serverDraft.employee || order.employee,
+          trip: serverDraft.trip || order.trip,
+          approval: serverDraft.approval || order.approval,
+          vehicle: serverDraft.vehicle || order.vehicle,
+          routeLines: serverDraft.routeLines || order.routeLines,
+          attachments: serverDraft.attachments || order.attachments,
+          updatedAt: serverDraft.updatedAt || order.updatedAt,
+        });
+        changed = true;
+      }
+    });
+
+    // Load statuses for submitted/approved orders
     statuses.forEach((serverOrder) => {
       let order = state.orders.find((item) => item.serverId && item.serverId === serverOrder.travelOrderId);
       if (!order) {
         order = createBlankOrder();
         order.number = serverOrder.orderNo || order.number;
         order.serverId = serverOrder.travelOrderId || "";
+        stampOrderOwner(order);
         state.orders.unshift(order);
         changed = true;
       }
@@ -2291,9 +2381,8 @@ async function refreshOwnedOrderStatuses() {
     });
 
     if (!state.orders.length) {
-      const firstOrder = createBlankOrder();
-      state.orders.push(firstOrder);
-      state.selectedId = firstOrder.id;
+      // Don't auto-create a blank order - user should create manually
+      state.selectedId = null;
       changed = true;
     } else if (!state.orders.some((order) => order.id === state.selectedId)) {
       state.selectedId = state.orders[0].id;
@@ -2309,6 +2398,9 @@ async function refreshOwnedOrderStatuses() {
 
 async function refreshOwnedOrdersAndRender() {
   if (appMode !== "orders") return;
+  // Don't refresh if accountant is editing someone else's order
+  const selectedOrder = state.orders.find((o) => o.id === state.selectedId);
+  if (selectedOrder?._editingAsAccountant) return;
   const changed = await refreshOwnedOrderStatuses();
   if (changed) render();
 }
@@ -2361,6 +2453,14 @@ function applyServerOrderStatus(order, serverOrder) {
 
   if (serverOrder.travelOrderId && order.serverId !== serverOrder.travelOrderId) {
     order.serverId = serverOrder.travelOrderId;
+    changed = true;
+  }
+  if (serverOrder.travelRequestId && order.travelRequestId !== serverOrder.travelRequestId) {
+    order.travelRequestId = serverOrder.travelRequestId;
+    changed = true;
+  }
+  if (serverOrder.approvalStage && order.approvalStage !== serverOrder.approvalStage) {
+    order.approvalStage = serverOrder.approvalStage;
     changed = true;
   }
   if (serverOrder.exportStatus && order.exportStatus !== serverOrder.exportStatus) {
@@ -2705,6 +2805,7 @@ function approvalDetailSection(detail) {
         </div>
         <div class="approval-actions">
           <button type="button" class="secondary-btn" data-approval-action="back">Zpět na frontu</button>
+          ${isAccounting ? `<button type="button" class="secondary-btn" data-approval-action="edit" data-travel-order-id="${escapeHtml(order.id)}">Upravit před schválením</button>` : ""}
           <button type="button" class="primary-btn" data-approval-action="approved" data-approval-id="${escapeHtml(approval.id)}">${isAccounting ? "Schválit kontrolu účetní" : "Schválit"}</button>
           <button type="button" class="secondary-btn" data-approval-action="returned" data-approval-id="${escapeHtml(approval.id)}">Vrátit k doplnění</button>
           ${isAccounting ? "" : `<button type="button" class="status-btn danger" data-approval-action="rejected" data-approval-id="${escapeHtml(approval.id)}">Zamítnout</button>`}
@@ -3706,7 +3807,7 @@ function workflowButtons(order) {
   if (isImportedOrder(order)) {
     return buttons.join("");
   }
-  if (order.status === "draft") {
+  if (order.status === "draft" || order._editingAsAccountant) {
     buttons.push(button("submit", "Předat ke schválení"));
   }
   if (order.status === "submitted" && !API_ENABLED) {
@@ -3716,7 +3817,6 @@ function workflowButtons(order) {
   }
   if (order.status === "approved") {
     buttons.push(button("settlement", "Otevřít vyúčtování"));
-    if (ownsOrder(order)) buttons.push(button("return", "Vrátit do úprav"));
   }
   if (order.status === "settlement") {
     buttons.push(button("close", "Uzavřít"));
@@ -3739,7 +3839,12 @@ function statusPill(status) {
 }
 
 function orderStatusPill(order) {
-  return statusPill(effectiveOrderStatus(order));
+  const status = effectiveOrderStatus(order);
+  // If status is "submitted" and we have approvalStage, show more specific label
+  if (status === "submitted" && order.approvalStage === "accounting") {
+    return `<span class="status-pill status-${escapeHtml(status)}">Kontrola účetní</span>`;
+  }
+  return statusPill(status);
 }
 
 function effectiveOrderStatus(order) {
@@ -3756,7 +3861,11 @@ function isImportedOrder(order) {
 }
 
 function canEditOrder(order) {
-  return Boolean(order && order.status === "draft" && ownsOrder(order));
+  // Allow editing drafts owned by user
+  if (order && order.status === "draft" && ownsOrder(order)) return true;
+  // Allow accountants to edit orders they're reviewing
+  if (order && order._editingAsAccountant) return true;
+  return false;
 }
 
 function blockLockedOrderEdit(order) {
@@ -3930,6 +4039,58 @@ async function handleFormInput(event) {
   }
 }
 
+async function openOrderForEdit(travelOrderId) {
+  if (!travelOrderId) return;
+
+  // Get order data from approval detail
+  const detail = approvalState.detail;
+  if (!detail || detail.order?.id !== travelOrderId) {
+    alert("Cestovní příkaz se nepodařilo najít.");
+    return;
+  }
+
+  // Find the order in state by serverId
+  let order = state.orders.find((o) => o.serverId === travelOrderId);
+
+  if (!order) {
+    // Create order from approval detail snapshot
+    const snapshotOrder = detailSnapshotOrder(detail);
+    const calc = detailCalculation(detail);
+
+    order = {
+      id: newId(),
+      serverId: travelOrderId,
+      number: detail.order.number || generateNumber(),
+      status: detail.order.status || "submitted",
+      approvalStage: detail.order.approvalStage || "",
+      createdAt: detail.order.createdAt || new Date().toISOString(),
+      updatedAt: detail.order.updatedAt || new Date().toISOString(),
+      travelRequestId: detail.order.travelRequestId || "",
+      employee: snapshotOrder.employee || {},
+      trip: snapshotOrder.trip || {},
+      approval: snapshotOrder.approval || {},
+      vehicle: snapshotOrder.vehicle || {},
+      routeLines: snapshotOrder.routeLines || [],
+      attachments: snapshotOrder.attachments || [],
+      history: [],
+      // Set owner from detail.employee (the actual owner, not the accountant)
+      ownerUserId: detail.employee?.id || "",
+      ownerLogin: detail.employee?.email || "",
+      ownerName: detail.employee?.name || "",
+      // Mark this order as being edited by accountant for approval
+      _editingAsAccountant: true,
+    };
+    state.orders.unshift(order);
+  }
+
+  // Switch to orders mode and select this order
+  appMode = "orders";
+  state.selectedId = order.id;
+  saveState();
+  render();
+  resetViewportScroll();
+}
+
 async function handleFormClick(event) {
   const requestAction = event.target.closest("[data-request-action]");
   if (requestAction) {
@@ -3937,6 +4098,8 @@ async function handleFormClick(event) {
       await saveRequestFromForm();
     } else if (requestAction.dataset.requestAction === "submit") {
       await submitRequestFromForm();
+    } else if (requestAction.dataset.requestAction === "create-order") {
+      await createOrderFromApprovedRequest();
     } else if (requestAction.dataset.requestAction === "new") {
       requestState.selectedId = null;
       renderRequests();
@@ -4000,6 +4163,8 @@ async function handleFormClick(event) {
       approvalState.detail = null;
       approvalState.selectedApprovalId = null;
       renderApprovals();
+    } else if (action === "edit") {
+      await openOrderForEdit(approvalAction.dataset.travelOrderId);
     } else {
       await decideApproval(action, approvalAction.dataset.approvalId);
     }
@@ -4091,8 +4256,21 @@ async function handleFormClick(event) {
     deleteOrder(order);
     return;
   } else if (action === "submit" && API_ENABLED) {
+    // Remember if this is an accountant-edited order before submission
+    const isAccountantEdit = order._editingAsAccountant === true;
     const submitted = await submitOrderForApproval(order);
     if (!submitted) return;
+
+    // If accountant submitted someone else's order, return to approvals mode
+    if (isAccountantEdit) {
+      // Remove the order from local state (it's not ours)
+      state.orders = state.orders.filter((o) => o.id !== order.id);
+      saveState();
+      // Switch back to approvals mode and refresh
+      await setMode("approvals");
+      return;
+    }
+
     applyWorkflowAction(order, action);
   } else if (API_ENABLED && ["approve", "reject"].includes(action)) {
     alert("Schválení se provádí jen ve frontě vybraného schvalovatele.");
@@ -4162,16 +4340,21 @@ function returnToDraftErrorMessage(code) {
 }
 
 async function submitOrderForApproval(order) {
-  if (!ownsOrder(order)) {
+  // Allow accountants to submit orders they're editing for approval
+  if (!ownsOrder(order) && !order._editingAsAccountant) {
     alert("Tento cestovní příkaz nemůže předat jiný uživatel než jeho vlastník.");
     return false;
   }
-  normalizeOrderApprover(order);
+  // Don't normalize approver when accountant is submitting someone else's order
+  if (!order._editingAsAccountant) {
+    normalizeOrderApprover(order);
+  }
   if (!order.approval?.approverUserId) {
     alert("Vyber schvalovatele cestovního příkazu.");
     return false;
   }
-  if (order.approval.approverUserId === currentUserId()) {
+  // Don't check self-approval when accountant is submitting someone else's order
+  if (!order._editingAsAccountant && order.approval.approverUserId === currentUserId()) {
     alert("Vlastní cestovní příkaz si nemůžeš schválit sám sobě.");
     return false;
   }
@@ -4189,7 +4372,11 @@ async function submitOrderForApproval(order) {
   try {
     const response = await apiFetch("/api/travel-orders/submit", {
       method: "POST",
-      body: JSON.stringify({ order, calculation }),
+      body: JSON.stringify({
+        order,
+        calculation,
+        accountantSubmit: order._editingAsAccountant || false
+      }),
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
@@ -4458,21 +4645,44 @@ function duplicateOrder(order) {
   render();
 }
 
-function deleteOrder(order) {
+async function deleteOrder(order) {
   if (!ownsOrder(order)) {
     alert("Tento cestovní příkaz nepatří přihlášenému uživateli.");
     return;
   }
   const ok = confirm(`Smazat ${order.number}?`);
   if (!ok) return;
+
+  // If order has serverId, delete from server
+  if (API_ENABLED && order.serverId) {
+    try {
+      const response = await apiFetch(`/api/travel-orders/${order.serverId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        if (error.error === "cannot_delete_non_draft") {
+          alert(`Nelze smazat příkaz ${order.number} - příkaz již není rozpracovaný (status: ${error.status}).`);
+        } else if (error.error === "order_not_found") {
+          alert(`Příkaz ${order.number} nebyl nalezen na serveru.`);
+        } else {
+          alert(`Nepodařilo se smazat příkaz ${order.number} ze serveru.`);
+        }
+        return;
+      }
+    } catch (error) {
+      alert(`Chyba při mazání příkazu: ${error.message}`);
+      return;
+    }
+  }
+
+  // Remove from local state
   state.orders = state.orders.filter((item) => item.id !== order.id);
   const remainingOwnOrders = visibleOrders();
   state.selectedId = remainingOwnOrders[0]?.id || null;
-  if (!remainingOwnOrders.length) {
-    const fresh = createBlankOrder();
-    state.orders.push(fresh);
-    state.selectedId = fresh.id;
-  }
+
+  // Don't auto-create a blank order - user should use "Nový příkaz" button
   saveState();
   render();
 }

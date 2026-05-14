@@ -33,7 +33,7 @@ def connection_string() -> str:
         raise RuntimeError("Missing ERP_DB_SERVER, ERP_DB_NAME, ERP_DB_USER or ERP_DB_PASSWORD.")
     encrypt = os.environ.get("ERP_DB_ENCRYPT", "false").lower() in {"1", "true", "yes"}
     return (
-        "DRIVER={ODBC Driver 17 for SQL Server};"
+        "DRIVER={ODBC Driver 18 for SQL Server};"
         f"SERVER={server};"
         f"DATABASE={database};"
         f"UID={user};"

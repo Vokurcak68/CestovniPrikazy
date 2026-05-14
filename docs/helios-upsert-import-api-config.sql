@@ -17,9 +17,9 @@ END;
 
 MERGE dbo.vok_CPImportNastaveni AS target
 USING (VALUES
-  (N'ImportResultsApiUrl', N'http://192.168.0.54:5055/api/helios/import-results', N'API endpoint pro oznaceni uspesneho importu cestaku v aplikaci.'),
-  (N'TravelOrderPreviewUrl', N'http://192.168.0.54:5055/helios/preview', N'Read-only nahled konkretniho cestovniho prikazu vcetne dokladu.'),
-  (N'ImportApiToken', N'<DOPLNIT_HELIOS_IMPORT_API_TOKEN_Z_ENV>', N'Token z .env aplikace: HELIOS_IMPORT_API_TOKEN.')
+  (N'ImportResultsApiUrl', N'https://cp.kuchyneoresi.eu/api/helios/import-results', N'API endpoint pro oznaceni uspesneho importu cestaku v aplikaci.'),
+  (N'TravelOrderPreviewUrl', N'https://cp.kuchyneoresi.eu/helios/preview', N'Read-only nahled konkretniho cestovniho prikazu vcetne dokladu.'),
+  (N'ImportApiToken', N'QE78t52GjssT10cXSR2xrDvilmLzbmU5oiGpvcx5rPQ', N'Token z .env aplikace: HELIOS_IMPORT_API_TOKEN.')
 ) AS src(Klic, Hodnota, Popis)
 ON target.Klic = src.Klic
 WHEN MATCHED THEN UPDATE SET

@@ -492,6 +492,7 @@ BEGIN TRY
   )
     THROW 51000, N'Nektery radek vyuctovani ma vyplneny zacatek, ale chybi konec. Dopln cas prijezdu/ukonceni useku a spust import znovu.', 1;
 
+  -- řádky cest - rozšířené o soukromé jízdy mezi služebními jízdami
   INSERT INTO dbo.TabICestaUsek (
     idCestak,
     Autor,
@@ -521,50 +522,96 @@ BEGIN TRY
     @CestakId,
     N'CestovniPrikazy',
     @Now,
-    COALESCE(NULLIF(TypUseku, N''), N'T'),
-    parsed.DatCasPocatek,
-    parsed.DatCasKonec,
-    LEFT(COALESCE(odkud, N''), 100),
-    LEFT(COALESCE(kam, N''), 100),
-    COALESCE(Mena, N'CZK'),
-    COALESCE(Stravne, 0),
-    COALESCE(CelkemStravne, Stravne, 0),
-    COALESCE(CelkemKC, Stravne, 0),
+    expanded.TypUseku,
+    expanded.DatCasPocatek,
+    expanded.DatCasKonec,
+    LEFT(COALESCE(expanded.odkud, N''), 100),
+    LEFT(COALESCE(expanded.kam, N''), 100),
+    COALESCE(expanded.Mena, N'CZK'),
+    COALESCE(expanded.Stravne, 0),
+    COALESCE(expanded.CelkemStravne, expanded.Stravne, 0),
+    COALESCE(expanded.CelkemKC, expanded.Stravne, 0),
     0,
-    COALESCE(Hod1, 0),
+    COALESCE(expanded.Hod1, 0),
     0,
-    COALESCE(ProcStrav, 0),
+    COALESCE(expanded.ProcStrav, 0),
     0,
     @CisloZakazky,
     @Stredisko,
     0,
     0,
     0,
-    CASE WHEN COALESCE(FreeMeals, 0) = 0 THEN 1 ELSE 0 END
-  FROM OPENJSON(@Payload, '$.routeLines')
-  WITH (
-    SequenceNo int '$.sequenceNo',
-    TypUseku nchar(1) '$.helios.values.TypUseku',
-    DatCasPocatekText nvarchar(50) '$.startAt',
-    DatCasKonecText nvarchar(50) '$.endAt',
-    odkud nvarchar(100) '$.from',
-    kam nvarchar(100) '$.to',
-    Mena nvarchar(3) '$.helios.values.Mena',
-    Stravne decimal(19, 6) '$.mealAmountForeign',
-    CelkemStravne decimal(19, 6) '$.mealAmountForeign',
-    CelkemKC decimal(19, 6) '$.mealAmount',
-    Hod1 decimal(19, 6) '$.calculatedHours',
-    ProcStrav decimal(19, 6) '$.helios.values.ProcStrav',
-    FreeMeals int '$.freeMeals'
-  )
-  CROSS APPLY (
+    CASE WHEN COALESCE(expanded.FreeMeals, 0) = 0 THEN 1 ELSE 0 END
+  FROM (
+    -- Služební jízdy z aplikace
     SELECT
-      CAST(TRY_CONVERT(datetimeoffset(0), DatCasPocatekText) AS datetime) AS DatCasPocatek,
-      CAST(TRY_CONVERT(datetimeoffset(0), DatCasKonecText) AS datetime) AS DatCasKonec
-  ) parsed
-  WHERE parsed.DatCasPocatek IS NOT NULL
-    AND parsed.DatCasKonec IS NOT NULL
-  ORDER BY SequenceNo;
+      SequenceNo * 2 - 1 AS SortOrder, -- 1, 3, 5, 7...
+      COALESCE(NULLIF(TypUseku, N''), N'T') AS TypUseku,
+      parsed.DatCasPocatek,
+      parsed.DatCasKonec,
+      odkud,
+      kam,
+      Mena,
+      Stravne,
+      CelkemStravne,
+      CelkemKC,
+      Hod1,
+      ProcStrav,
+      FreeMeals
+    FROM OPENJSON(@Payload, '$.routeLines')
+    WITH (
+      SequenceNo int '$.sequenceNo',
+      TypUseku nchar(1) '$.helios.values.TypUseku',
+      DatCasPocatekText nvarchar(50) '$.startAt',
+      DatCasKonecText nvarchar(50) '$.endAt',
+      odkud nvarchar(100) '$.from',
+      kam nvarchar(100) '$.to',
+      Mena nvarchar(3) '$.helios.values.Mena',
+      Stravne decimal(19, 6) '$.mealAmountForeign',
+      CelkemStravne decimal(19, 6) '$.mealAmountForeign',
+      CelkemKC decimal(19, 6) '$.mealAmount',
+      Hod1 decimal(19, 6) '$.calculatedHours',
+      ProcStrav decimal(19, 6) '$.helios.values.ProcStrav',
+      FreeMeals int '$.freeMeals'
+    )
+    CROSS APPLY (
+      SELECT
+        CAST(TRY_CONVERT(datetimeoffset(0), DatCasPocatekText) AS datetime) AS DatCasPocatek,
+        CAST(TRY_CONVERT(datetimeoffset(0), DatCasKonecText) AS datetime) AS DatCasKonec
+    ) parsed
+    WHERE parsed.DatCasPocatek IS NOT NULL
+      AND parsed.DatCasKonec IS NOT NULL
+
+    UNION ALL
+
+    -- Soukromé jízdy (cesta domu po každé služební jízdě)
+    SELECT
+      SequenceNo * 2 AS SortOrder, -- 2, 4, 6, 8...
+      N'S' AS TypUseku, -- S = Soukromá
+      parsed.DatCasKonec AS DatCasPocatek, -- Začíná koncem služební jízdy
+      parsed.DatCasKonec AS DatCasKonec, -- Stejný čas jako začátek (okamžitá cesta)
+      kam AS odkud, -- Odkud = kam služební jízdy
+      N'' AS kam, -- Prázdný string místo NULL
+      NULL AS Mena,
+      0 AS Stravne,
+      0 AS CelkemStravne,
+      0 AS CelkemKC,
+      0 AS Hod1,
+      0 AS ProcStrav,
+      0 AS FreeMeals
+    FROM OPENJSON(@Payload, '$.routeLines')
+    WITH (
+      SequenceNo int '$.sequenceNo',
+      DatCasKonecText nvarchar(50) '$.endAt',
+      kam nvarchar(100) '$.to'
+    )
+    CROSS APPLY (
+      SELECT
+        CAST(TRY_CONVERT(datetimeoffset(0), DatCasKonecText) AS datetime) AS DatCasKonec
+    ) parsed
+    WHERE parsed.DatCasKonec IS NOT NULL
+  ) expanded
+  ORDER BY expanded.SortOrder;
 
   /* 5. Naklady z radku vyuctovani a dokladu */
   ;WITH line_expenses AS (
