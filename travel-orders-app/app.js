@@ -3257,20 +3257,20 @@ function tripSection(order) {
       </div>
       <div class="section-body form-grid">
         ${approverPickerField(order)}
-        ${field("Počátek cesty", "trip.startAt", order.trip.startAt, "datetime-local")}
-        ${field("Konec cesty", "trip.endAt", order.trip.endAt, "datetime-local")}
+        ${field("Počátek cesty", "trip.startAt", order.trip.startAt, "datetime-local", "", null, false, "Datum a čas zahájení celé pracovní cesty")}
+        ${field("Konec cesty", "trip.endAt", order.trip.endAt, "datetime-local", "", null, false, "Datum a čas ukončení celé pracovní cesty")}
         <label>
           <span>Měna vyúčtování</span>
           <select data-path="trip.currencyCode">${currencyOptionsHtml(order.trip.currencyCode || "CZK")}</select>
         </label>
         ${readonlyField("Kurz měny", formatExchangeRate(order.trip.exchangeRate, order.trip.exchangeRateDate), "exchange-rate-field")}
-        ${field("Místo jednání", "trip.destination", order.trip.destination)}
-        ${field("Účel cesty", "trip.purpose", order.trip.purpose, "text", "wide")}
-        ${field("Navštívené firmy", "trip.visitedCompanies", order.trip.visitedCompanies, "text", "wide")}
-        ${field("Spolucestující", "trip.companions", order.trip.companions, "text", "wide")}
-        ${field("Předpokládané výdaje", "trip.expectedExpense", order.trip.expectedExpense, "number", "", "0.01")}
-        ${field("Povolená záloha", "trip.advance", order.trip.advance, "number", "", "0.01")}
-        ${field("Datum cestovní zprávy", "trip.reportDate", order.trip.reportDate, "date")}
+        ${field("Místo jednání", "trip.destination", order.trip.destination, "text", "", null, false, "Zadejte místo, kde se cesta konala (např. Praha, Berlin)")}
+        ${field("Účel cesty", "trip.purpose", order.trip.purpose, "text", "wide", null, false, "Popište stručně důvod a cíl pracovní cesty")}
+        ${field("Navštívené firmy", "trip.visitedCompanies", order.trip.visitedCompanies, "text", "wide", null, false, "Uveďte názvy firem nebo organizací, které jste navštívili")}
+        ${field("Spolucestující", "trip.companions", order.trip.companions, "text", "wide", null, false, "Jména osob, které s vámi cestovaly (pokud byly)")}
+        ${field("Předpokládané výdaje", "trip.expectedExpense", order.trip.expectedExpense, "number", "", "0.01", false, "Odhadovaná celková částka výdajů na cestu")}
+        ${field("Povolená záloha", "trip.advance", order.trip.advance, "number", "", "0.01", false, "Částka poskytnutá předem na pokrytí výdajů")}
+        ${field("Datum cestovní zprávy", "trip.reportDate", order.trip.reportDate, "date", "", null, false, "Datum, kdy byla cestovní zpráva vyplněna")}
       </div>
     </section>
   `;
@@ -3481,13 +3481,13 @@ function routeCard(line, lineCalc, index, totalLines) {
         <button class="table-icon-btn" data-remove-line type="button" title="Odebrat řádek" aria-label="Odebrat řádek">×</button>
       </div>
       <div class="route-grid">
-        ${lineField("Odjezd", "startAt", line.startAt, "datetime-local")}
-        ${lineField("Odkud", "from", line.from)}
-        ${lineField("Kam", "to", line.to)}
-        ${lineField("Příjezd", "endAt", line.endAt, "datetime-local")}
-        ${lineField("Firma / místo", "company", line.company)}
-        ${lineField("Účel", "purpose", line.purpose)}
-        ${lineField("Kilometry", "km", line.km, "number", "1")}
+        ${lineField("Odjezd", "startAt", line.startAt, "datetime-local", null, "Datum a čas začátku tohoto úseku cesty")}
+        ${lineField("Odkud", "from", line.from, "text", null, "Místo odjezdu (město, adresa)")}
+        ${lineField("Kam", "to", line.to, "text", null, "Místo příjezdu (město, adresa)")}
+        ${lineField("Příjezd", "endAt", line.endAt, "datetime-local", null, "Datum a čas konce tohoto úseku cesty")}
+        ${lineField("Firma / místo", "company", line.company, "text", null, "Název firmy nebo místa, které jste navštívili")}
+        ${lineField("Účel", "purpose", line.purpose, "text", null, "Účel návštěvy nebo jednání na tomto úseku")}
+        ${lineField("Kilometry", "km", line.km, "number", "1", "Počet ujetých kilometrů (vyplňte při použití osobního vozidla)")}
         <label>
           <span>Typ úseku</span>
           ${lineSegmentTypeSelect(line.segmentType || "domestic")}
@@ -3499,10 +3499,10 @@ function routeCard(line, lineCalc, index, totalLines) {
         </label>
       </div>
       <div class="route-costs">
-        ${lineField("Jízdné", "fare", line.fare, "number", "0.01")}
-        ${lineField("Nocležné", "lodging", line.lodging, "number", "0.01")}
-        ${lineField("Vedlejší výdaje", "other", line.other, "number", "0.01")}
-        ${lineField("Jídla zdarma", "freeMeals", line.freeMeals, "number", "1")}
+        ${lineField("Jízdné", "fare", line.fare, "number", "0.01", "Náklady na dopravu (vlak, letadlo, taxi, atd.)")}
+        ${lineField("Nocležné", "lodging", line.lodging, "number", "0.01", "Náklady na ubytování")}
+        ${lineField("Vedlejší výdaje", "other", line.other, "number", "0.01", "Ostatní výdaje (parkování, telefon, atd.)")}
+        ${lineField("Jídla zdarma", "freeMeals", line.freeMeals, "number", "1", "Počet jídel poskytnutých zdarma (snižuje stravné)")}
         ${foreignLineInfo(line)}
       </div>
       ${lastLineActions}
@@ -3558,12 +3558,13 @@ function routeTitle(line) {
   return "Nový úsek cesty";
 }
 
-function lineField(label, fieldName, value, type = "text", step = null) {
+function lineField(label, fieldName, value, type = "text", step = null, help = "") {
   const stepAttr = step ? `step="${escapeHtml(step)}"` : "";
   const numberAttrs = type === "number" ? `min="0" inputmode="decimal"` : "";
+  const helpIcon = help ? `<span class="help-icon" data-help="${escapeHtml(help)}" title="${escapeHtml(help)}">?</span>` : "";
   return `
     <label>
-      <span>${escapeHtml(label)}</span>
+      <span>${escapeHtml(label)}${helpIcon}</span>
       <input data-line-field="${escapeHtml(fieldName)}" type="${type}" ${numberAttrs} ${stepAttr} value="${escapeHtml(inputValue(value))}" />
     </label>
   `;
@@ -3769,13 +3770,14 @@ function kpi(label, key, value) {
   return `<div class="kpi"><span>${escapeHtml(label)}</span><strong data-summary="${escapeHtml(key)}">${escapeHtml(value)}</strong></div>`;
 }
 
-function field(label, path, value, type = "text", className = "", step = null, rate = false) {
+function field(label, path, value, type = "text", className = "", step = null, rate = false, help = "") {
   const attr = rate ? `data-rate-path="${escapeHtml(path.replace(/^rates\./, ""))}"` : `data-path="${escapeHtml(path)}"`;
   const stepAttr = step ? `step="${escapeHtml(step)}"` : "";
   const inputMode = type === "number" ? `inputmode="decimal"` : "";
+  const helpIcon = help ? `<span class="help-icon" data-help="${escapeHtml(help)}" title="${escapeHtml(help)}">?</span>` : "";
   return `
     <label class="${escapeHtml(className)}">
-      <span>${escapeHtml(label)}</span>
+      <span>${escapeHtml(label)}${helpIcon}</span>
       <input ${attr} type="${type}" ${stepAttr} ${inputMode} value="${escapeHtml(inputValue(value))}" />
     </label>
   `;
