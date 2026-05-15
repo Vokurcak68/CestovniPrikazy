@@ -1368,6 +1368,7 @@ def my_travel_order_statuses():
           o.order_no AS "orderNo",
           o.owner_user_id::text AS "ownerUserId",
           o.travel_request_id::text AS "travelRequestId",
+          tr.request_no AS "requestNo",
           o.status::text AS status,
           o.export_status::text AS "exportStatus",
           total.calculation_snapshot AS "calculationSnapshot",
@@ -1384,6 +1385,7 @@ def my_travel_order_statuses():
           latest_approval.decided_at AS "approvalDecidedAt",
           latest_approval.decision_comment AS "approvalDecisionComment"
         FROM travel.travel_order o
+        LEFT JOIN travel.travel_request tr ON tr.id = o.travel_request_id
         LEFT JOIN travel.travel_order_total total ON total.travel_order_id = o.id
         LEFT JOIN travel.app_user current_approver ON current_approver.id = o.current_approver_user_id
         LEFT JOIN LATERAL (

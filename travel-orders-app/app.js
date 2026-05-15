@@ -536,8 +536,16 @@ async function setMode(mode) {
 
   appMode = mode;
   try {
-    if (mode === "requests") await loadMyTravelRequests(true);
-    if (mode === "orders") await refreshOwnedOrderStatuses();
+    if (mode === "requests") {
+      await loadMyTravelRequests(true);
+      // Also load orders to check for existing travel orders linked to requests
+      await refreshOwnedOrderStatuses();
+    }
+    if (mode === "orders") {
+      await refreshOwnedOrderStatuses();
+      // Also load requests to show request numbers in order details
+      await loadMyTravelRequests(false);
+    }
     if (mode === "admin") await loadAdminData();
     if (mode === "approvals") await loadApprovalData();
     if (mode === "profile") await loadProfileData();
@@ -1190,6 +1198,9 @@ function renderRequests() {
   const approvers = orderApproverOptions();
   const selectedApproverId = selected.approverUserId || defaultOrderApprover()?.id || "";
 
+  // Check if travel order already exists for this request
+  const hasExistingOrder = selected.id && state && state.orders && state.orders.some(order => order.travelRequestId === selected.id);
+
   els.empty.hidden = true;
   els.form.hidden = false;
   els.list.innerHTML = `
@@ -1210,7 +1221,8 @@ function renderRequests() {
       <div class="form-header">
         <div><h2>Žádost o vycestování</h2></div>
         <div class="header-actions">
-          ${selected.status === "approved" ? `<button type="button" class="primary-btn" data-request-action="create-order">+ Založit cestovní příkaz</button>` : ""}
+          ${selected.status === "approved" && !hasExistingOrder ? `<button type="button" class="primary-btn" data-request-action="create-order">+ Založit cestovní příkaz</button>` : ""}
+          ${hasExistingOrder ? `<p class="note">Cestovní příkaz již existuje</p>` : ""}
           ${selected.status === "draft" || !selected.status ? `<button type="button" class="primary-btn" data-request-action="save">Uložit žádost</button>` : ""}
           ${selected.id && selected.status !== "approved" ? `<button type="button" class="status-btn submitted" data-request-action="submit">Odeslat ke schválení</button>` : ""}
         </div>
@@ -3105,6 +3117,22 @@ function renderForm(options = {}) {
   }
 
   const calc = calculateOrder(order);
+
+  // Find linked travel request if exists
+  let requestInfo = "";
+  if (order.requestNo) {
+    requestInfo = `<span>Žádost ${escapeHtml(order.requestNo)}</span>`;
+  } else if (order.travelRequestId) {
+    const linkedRequest = requestState.items.find(r => r.id === order.travelRequestId);
+    if (linkedRequest && linkedRequest.requestNo) {
+      requestInfo = `<span>Žádost ${escapeHtml(linkedRequest.requestNo)}</span>`;
+    } else {
+      requestInfo = `<span>Žádost navázána</span>`;
+    }
+  } else {
+    requestInfo = `<span>Bez schválené žádosti</span>`;
+  }
+
   els.form.innerHTML = `
     <div class="detail-column">
       <div class="form-header">
@@ -3114,7 +3142,7 @@ function renderForm(options = {}) {
             ${orderStatusPill(order)}
             <span>Aktualizováno ${formatDateTime(order.updatedAt)}</span>
             <span>${escapeHtml(order.employee.name || "Bez zaměstnance")}</span>
-            ${order.requestNo ? `<span>Žádost ${escapeHtml(order.requestNo)}</span>` : (order.travelRequestId ? `<span>Žádost navázána</span>` : `<span>Bez schválené žádosti</span>`)}
+            ${requestInfo}
           </div>
         </div>
         <div class="header-actions">
@@ -3134,6 +3162,9 @@ function renderForm(options = {}) {
   renderPrintSheet(order);
   restoreTabbarPosition(options.tabScrollLeft ?? previousTabScrollLeft, Boolean(options.revealActiveTab));
   if (options.focusLineId) focusRouteLine(options.focusLineId);
+
+  // Initialize Flatpickr datetime pickers
+  initDateTimePickers();
 }
 
 function focusRouteLine(lineId) {
@@ -4915,6 +4946,35 @@ function initTooltips() {
   });
 }
 
+/**
+ * Initialize Flatpickr datetime pickers for all datetime-local inputs
+ */
+function initDateTimePickers() {
+  // Destroy existing flatpickr instances first
+  document.querySelectorAll('input[type="datetime-local"]').forEach(input => {
+    if (input._flatpickr) {
+      input._flatpickr.destroy();
+    }
+  });
+
+  // Initialize flatpickr on all datetime-local inputs
+  document.querySelectorAll('input[type="datetime-local"]').forEach(input => {
+    flatpickr(input, {
+      enableTime: true,
+      time_24hr: true,
+      dateFormat: "Y-m-d H:i",
+      altInput: true,
+      altFormat: "j. n. Y H:i",
+      locale: "cs",
+      onChange: function(selectedDates, dateStr, instance) {
+        // Trigger input event so the form updates
+        input.value = dateStr;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+  });
+}
+
 function showTravelRequestSelectionDialog(requests) {
   return new Promise((resolve) => {
     const existing = document.getElementById("travelRequestSelectionOverlay");
@@ -4927,7 +4987,7 @@ function showTravelRequestSelectionDialog(requests) {
     const requestRows = requests.map((req) => {
       const startAt = req.startAt ? new Date(req.startAt).toLocaleDateString("cs-CZ") : "";
       const endAt = req.endAt ? new Date(req.endAt).toLocaleDateString("cs-CZ") : "";
-      const transport = req.transport || "neuvedeno";
+      const transport = req.transport ? (TRANSPORT_OPTIONS[req.transport] || req.transport) : "neuvedeno";
       return `
         <div class="request-row" data-request-id="${escapeHtml(req.id)}">
           <div>
@@ -5752,7 +5812,7 @@ function renderPrintSheet(order) {
   }).join("");
 
   els.print.innerHTML = `
-    <h1>CESTOVNÍ P ?ÍKAZ</h1>
+    <h1>CESTOVNÍ PŘÍKAZ</h1>
     <h2>${escapeHtml(order.number)}</h2>
     <div class="print-grid">
       <div class="print-line"><strong>Organizace:</strong> ${escapeHtml(order.employee.organization)}</div>
@@ -5766,7 +5826,7 @@ function renderPrintSheet(order) {
     </div>
     <div class="print-line"><strong>Účel cesty:</strong> ${escapeHtml(order.trip.purpose)}</div>
     <div class="print-line"><strong>Spolucestující:</strong> ${escapeHtml(order.trip.companions)}</div>
-    <h2>VYÚČTOV ?NÍ PRACOVNÍ CESTY</h2>
+    <h2>VYÚČTOVÁNÍ PRACOVNÍ CESTY</h2>
     <table class="print-table">
       <thead>
         <tr>
