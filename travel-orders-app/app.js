@@ -2479,6 +2479,10 @@ function applyServerOrderStatus(order, serverOrder) {
     order.travelRequestId = serverOrder.travelRequestId;
     changed = true;
   }
+  if ((serverOrder.requestNo || "") !== (order.requestNo || "")) {
+    order.requestNo = serverOrder.requestNo || "";
+    changed = true;
+  }
   if (serverOrder.approvalStage && order.approvalStage !== serverOrder.approvalStage) {
     order.approvalStage = serverOrder.approvalStage;
     changed = true;
