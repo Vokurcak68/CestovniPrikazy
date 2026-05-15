@@ -4658,15 +4658,27 @@ async function duplicateOrder(order) {
 
         // Create duplicate with selected travel request
         const clone = structuredClone(order);
+
+        // Reset all IDs and server-related fields
         clone.id = newId();
         clone.number = generateNumber();
         clone.status = "draft";
 
-        // Clear old travel request references and set new one
+        // Clear all server-side and old travel request references
+        delete clone.serverId;
         delete clone.travelRequestId;
         delete clone.requestNo;
-        delete clone.serverId;
+        delete clone.heliosId;
+        delete clone.importedAt;
+        delete clone.exportedAt;
+        delete clone.approvedAt;
+        delete clone.submittedAt;
+        delete clone.rejectedAt;
+        delete clone.returnNotice;
+
+        // Set new travel request
         clone.travelRequestId = selectedRequest.id;
+        clone.requestNo = selectedRequest.requestNo;
 
         clone.createdAt = new Date().toISOString();
         clone.updatedAt = clone.createdAt;
@@ -4674,10 +4686,34 @@ async function duplicateOrder(order) {
         clone.routeLines = clone.routeLines.map((line) => ({ ...line, id: newId() }));
         clone.attachments = (clone.attachments || []).map((attachment) => ({ ...attachment, id: newId() }));
         stampOrderOwner(clone);
+
         state.orders.unshift(clone);
         state.selectedId = clone.id;
         saveState();
         render();
+
+        // Sync to server immediately to mark travel request as used
+        console.log("Attempting to sync duplicate to server...", {
+          id: clone.id,
+          status: clone.status,
+          travelRequestId: clone.travelRequestId,
+          currentUser: !!currentUser,
+          API_ENABLED
+        });
+        try {
+          const syncResult = await syncDraftToServer(clone);
+          console.log("Sync result:", syncResult);
+          if (syncResult) {
+            console.log("✅ Duplicate synced to server successfully");
+          } else {
+            console.warn("⚠️ Sync returned false - draft not saved to server");
+            showToast("Duplikát vytvořen lokálně, ale neuložil se na server", "warning", 5000);
+          }
+        } catch (error) {
+          console.error("❌ Failed to sync duplicate to server:", error);
+          showToast("Duplikát vytvořen, ale nepodařilo se synchronizovat se serverem", "warning", 5000);
+        }
+
         return;
       } else {
         showToast("Chyba při načítání schválených žádostí", "error");

@@ -4881,15 +4881,17 @@ def save_travel_order_draft():
     # Validate travel_request_id if provided (for duplicates from approved requests)
     if travel_request_id:
         request_check_sql = """
-          SELECT EXISTS(
-            SELECT 1
-            FROM travel.travel_request r
-            LEFT JOIN travel.travel_order o ON o.travel_request_id = r.id
-            WHERE r.id = :'request_id'::uuid
-              AND r.owner_user_id = :'user_id'::uuid
-              AND r.status = 'approved'
-              AND o.id IS NULL
-          ) AS is_valid;
+          SELECT jsonb_build_object('is_valid',
+            EXISTS(
+              SELECT 1
+              FROM travel.travel_request r
+              LEFT JOIN travel.travel_order o ON o.travel_request_id = r.id
+              WHERE r.id = :'request_id'::uuid
+                AND r.owner_user_id = :'user_id'::uuid
+                AND r.status = 'approved'
+                AND o.id IS NULL
+            )
+          )::text;
         """
         request_check = run_psql_json(
             request_check_sql,
