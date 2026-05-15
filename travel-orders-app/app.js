@@ -231,6 +231,9 @@ async function startApp() {
     els.search.addEventListener("input", renderList);
     els.statusFilter.addEventListener("change", renderList);
 
+    // Initialize tooltip system
+    initTooltips();
+
     els.list.addEventListener("click", (event) => {
       const requestItem = event.target.closest("[data-request-id]");
       if (requestItem) {
@@ -4642,7 +4645,7 @@ async function duplicateOrder(order) {
         const availableRequests = await response.json();
 
         if (!availableRequests || availableRequests.length === 0) {
-          alert("Nelze duplikovat cestovní příkaz - není dostupná žádná schválená žádost o služební cestu");
+          showToast("Nelze duplikovat cestovní příkaz - není dostupná žádná schválená žádost o služební cestu", "warning", 6000);
           return;
         }
 
@@ -4677,18 +4680,175 @@ async function duplicateOrder(order) {
         render();
         return;
       } else {
-        alert("Chyba při načítání schválených žádostí");
+        showToast("Chyba při načítání schválených žádostí", "error");
         return;
       }
     } catch (error) {
       console.error("Error fetching travel requests:", error);
-      alert("Chyba při duplikaci cestovního příkazu");
+      showToast("Chyba při duplikaci cestovního příkazu", "error");
       return;
     }
   }
 
   // API není dostupné nebo uživatel není přihlášený
-  alert("Duplikace vyžaduje připojení k serveru a přihlášení");
+  showToast("Duplikace vyžaduje připojení k serveru a přihlášení", "info");
+}
+
+/**
+ * Toast notification system
+ * @param {string} message - The message to display
+ * @param {string} type - Type: 'info', 'success', 'warning', 'error'
+ * @param {number} duration - Duration in milliseconds (default 5000, 0 = no auto-dismiss)
+ */
+function showToast(message, type = 'info', duration = 5000) {
+  // Ensure toast container exists
+  let container = document.getElementById('toastContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+
+  // Icon mapping
+  const icons = {
+    info: 'ℹ️',
+    success: '✓',
+    warning: '⚠️',
+    error: '✕'
+  };
+
+  // Create toast element
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <div class="toast-icon">${icons[type] || icons.info}</div>
+    <div class="toast-content">
+      <p class="toast-message">${escapeHtml(message)}</p>
+    </div>
+    <button class="toast-close" aria-label="Zavřít" type="button">×</button>
+  `;
+
+  container.appendChild(toast);
+
+  // Close button handler
+  const closeBtn = toast.querySelector('.toast-close');
+  closeBtn.addEventListener('click', () => dismissToast(toast));
+
+  // Swipe to dismiss on mobile
+  let startY = 0;
+  let currentY = 0;
+  toast.addEventListener('touchstart', (e) => {
+    startY = e.touches[0].clientY;
+  });
+  toast.addEventListener('touchmove', (e) => {
+    currentY = e.touches[0].clientY;
+    const deltaY = startY - currentY;
+    if (deltaY > 10) {
+      // Swiping up
+      toast.style.transform = `translateY(-${deltaY}px)`;
+      toast.style.opacity = Math.max(0, 1 - (deltaY / 100));
+    }
+  });
+  toast.addEventListener('touchend', () => {
+    const deltaY = startY - currentY;
+    if (deltaY > 50) {
+      dismissToast(toast);
+    } else {
+      toast.style.transform = '';
+      toast.style.opacity = '';
+    }
+  });
+
+  // Auto dismiss
+  if (duration > 0) {
+    setTimeout(() => dismissToast(toast), duration);
+  }
+
+  return toast;
+}
+
+function dismissToast(toast) {
+  if (!toast || !toast.parentElement) return;
+  toast.classList.add('toast-exit');
+  setTimeout(() => {
+    toast.remove();
+    // Remove container if empty
+    const container = document.getElementById('toastContainer');
+    if (container && container.children.length === 0) {
+      container.remove();
+    }
+  }, 200);
+}
+
+/**
+ * Tooltip system - shows help text when clicking help icon
+ * @param {HTMLElement} icon - The help icon element
+ * @param {string} message - The help message to display
+ */
+function showTooltip(icon, message) {
+  // Remove any existing tooltips
+  document.querySelectorAll('.tooltip-popup').forEach(t => t.remove());
+
+  const tooltip = document.createElement('div');
+  tooltip.className = 'tooltip-popup tooltip-bottom';
+  tooltip.textContent = message;
+  document.body.appendChild(tooltip);
+
+  // Position tooltip
+  const iconRect = icon.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+
+  let top = iconRect.bottom + 8;
+  let left = iconRect.left + (iconRect.width / 2) - (tooltipRect.width / 2);
+
+  // Check if tooltip would go off screen
+  if (left < 10) {
+    left = 10;
+  } else if (left + tooltipRect.width > window.innerWidth - 10) {
+    left = window.innerWidth - tooltipRect.width - 10;
+  }
+
+  // If tooltip would go below viewport, show above icon instead
+  if (top + tooltipRect.height > window.innerHeight - 10) {
+    top = iconRect.top - tooltipRect.height - 8;
+    tooltip.classList.remove('tooltip-bottom');
+    tooltip.classList.add('tooltip-top');
+  }
+
+  tooltip.style.top = `${top}px`;
+  tooltip.style.left = `${left}px`;
+
+  // Close on click outside
+  const closeTooltip = (e) => {
+    if (!tooltip.contains(e.target) && e.target !== icon) {
+      tooltip.remove();
+      document.removeEventListener('click', closeTooltip);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeTooltip), 0);
+
+  // Close on scroll
+  const closeOnScroll = () => {
+    tooltip.remove();
+    document.removeEventListener('scroll', closeOnScroll, true);
+  };
+  document.addEventListener('scroll', closeOnScroll, true);
+}
+
+/**
+ * Initialize tooltip icons - adds click handlers
+ */
+function initTooltips() {
+  document.addEventListener('click', (e) => {
+    const helpIcon = e.target.closest('.help-icon');
+    if (helpIcon) {
+      e.preventDefault();
+      e.stopPropagation();
+      const message = helpIcon.dataset.help || helpIcon.getAttribute('title') || 'Nápověda';
+      showTooltip(helpIcon, message);
+    }
+  });
 }
 
 function showTravelRequestSelectionDialog(requests) {

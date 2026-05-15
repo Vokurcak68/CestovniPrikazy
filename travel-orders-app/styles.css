@@ -1071,6 +1071,263 @@ textarea:focus {
   border-width: 2px;
 }
 
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+}
+
+/* Desktop: pravý horní roh */
+@media (min-width: 769px) {
+  .toast-container {
+    top: 20px;
+    right: 20px;
+    max-width: 420px;
+  }
+}
+
+/* Mobil: horní část pod status barem */
+@media (max-width: 768px) {
+  .toast-container {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+  }
+}
+
+.toast {
+  pointer-events: auto;
+  margin-bottom: 12px;
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(7, 22, 47, 0.15), 0 2px 8px rgba(7, 22, 47, 0.08);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 54px;
+  animation: toastSlideIn 0.3s ease-out;
+  border-left: 4px solid var(--accent);
+}
+
+@keyframes toastSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  @keyframes toastSlideIn {
+    from {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+}
+
+.toast.toast-exit {
+  animation: toastSlideOut 0.2s ease-in forwards;
+}
+
+@keyframes toastSlideOut {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  @keyframes toastSlideOut {
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(-120%);
+      opacity: 0;
+    }
+  }
+}
+
+.toast-icon {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.toast-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-message {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.toast-close:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
+/* Toast variants */
+.toast.toast-info {
+  border-left-color: #2e7bff;
+}
+
+.toast.toast-info .toast-icon {
+  color: #2e7bff;
+}
+
+.toast.toast-success {
+  border-left-color: var(--ok);
+}
+
+.toast.toast-success .toast-icon {
+  color: var(--ok);
+}
+
+.toast.toast-warning {
+  border-left-color: var(--warning);
+}
+
+.toast.toast-warning .toast-icon {
+  color: var(--warning);
+}
+
+.toast.toast-error {
+  border-left-color: var(--danger);
+}
+
+.toast.toast-error .toast-icon {
+  color: var(--danger);
+}
+
+/* Podpora pro swipe na mobilu */
+@media (max-width: 768px) {
+  .toast {
+    touch-action: pan-y;
+  }
+}
+
+/* Touch-friendly Tooltips */
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: help;
+  vertical-align: middle;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.help-icon:hover {
+  background: var(--accent-dark);
+}
+
+/* Tooltip popup */
+.tooltip-popup {
+  position: absolute;
+  z-index: 9999;
+  max-width: 300px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 20px rgba(7, 22, 47, 0.12);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  animation: tooltipFadeIn 0.15s ease-out;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.tooltip-popup::before {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 0;
+  border: 6px solid transparent;
+}
+
+/* Arrow positions */
+.tooltip-popup.tooltip-bottom::before {
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-bottom-color: var(--line);
+}
+
+.tooltip-popup.tooltip-top::before {
+  bottom: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-top-color: var(--line);
+}
+
+/* Mobile: větší touch target */
+@media (max-width: 768px) {
+  .help-icon {
+    width: 22px;
+    height: 22px;
+    font-size: 14px;
+  }
+
+  .tooltip-popup {
+    max-width: calc(100vw - 40px);
+  }
+}
+
 .return-notice {
   display: grid;
   gap: 8px;
