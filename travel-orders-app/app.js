@@ -281,6 +281,11 @@ async function startApp() {
       if (!document.hidden) refreshOwnedOrdersAndRender();
     });
     window.setInterval(refreshOwnedOrdersAndRender, 30000);
+
+    // Initialize help panel and tooltips (Phase 1 & Phase 2)
+    initTooltips();
+    initHelpPanel();
+
     appStarted = true;
   }
 
@@ -4829,54 +4834,75 @@ function showTooltip(icon, message) {
   document.querySelectorAll('.tooltip-popup').forEach(t => t.remove());
 
   const tooltip = document.createElement('div');
-  tooltip.className = 'tooltip-popup tooltip-bottom';
+  tooltip.className = 'tooltip-popup';
   tooltip.textContent = message;
+
+  // Add to body first
   document.body.appendChild(tooltip);
 
-  // Position tooltip
+  // Position tooltip - use fixed positioning
   const iconRect = icon.getBoundingClientRect();
   const tooltipRect = tooltip.getBoundingClientRect();
 
-  let top = iconRect.bottom + 8;
+  let top = iconRect.bottom + 10;
   let left = iconRect.left + (iconRect.width / 2) - (tooltipRect.width / 2);
 
-  // Check if tooltip would go off screen
-  if (left < 10) {
-    left = 10;
-  } else if (left + tooltipRect.width > window.innerWidth - 10) {
-    left = window.innerWidth - tooltipRect.width - 10;
+  // Keep tooltip on screen horizontally
+  const margin = 20;
+  if (left < margin) {
+    left = margin;
+  } else if (left + tooltipRect.width > window.innerWidth - margin) {
+    left = window.innerWidth - tooltipRect.width - margin;
   }
 
-  // If tooltip would go below viewport, show above icon instead
-  if (top + tooltipRect.height > window.innerHeight - 10) {
-    top = iconRect.top - tooltipRect.height - 8;
-    tooltip.classList.remove('tooltip-bottom');
-    tooltip.classList.add('tooltip-top');
+  // Keep tooltip on screen vertically
+  if (top + tooltipRect.height > window.innerHeight - margin) {
+    top = iconRect.top - tooltipRect.height - 10;
+  }
+
+  // Make sure tooltip is never cut off at top
+  if (top < margin) {
+    top = margin;
   }
 
   tooltip.style.top = `${top}px`;
   tooltip.style.left = `${left}px`;
 
+  console.log('Tooltip created:', { top, left, message, isMobile: window.innerWidth <= 768 });
+
   // Close on click outside
   const closeTooltip = (e) => {
     if (!tooltip.contains(e.target) && e.target !== icon) {
+      console.log('Closing tooltip');
       tooltip.remove();
       document.removeEventListener('click', closeTooltip);
+      document.removeEventListener('touchend', closeTooltip);
     }
   };
-  setTimeout(() => document.addEventListener('click', closeTooltip), 0);
+
+  // Add longer delay for mobile to prevent immediate close
+  const isMobile = window.innerWidth <= 768;
+  const delay = isMobile ? 1500 : 150;
+
+  console.log('Setting up close listener with delay:', delay);
+
+  setTimeout(() => {
+    document.addEventListener('click', closeTooltip);
+    if (isMobile) {
+      document.addEventListener('touchend', closeTooltip);
+    }
+  }, delay);
 
   // Close on scroll
   const closeOnScroll = () => {
     tooltip.remove();
     document.removeEventListener('scroll', closeOnScroll, true);
+    document.removeEventListener('click', closeTooltip);
+    document.removeEventListener('touchend', closeTooltip);
   };
   document.addEventListener('scroll', closeOnScroll, true);
 }
 
-/**
- * Initialize tooltip icons - adds click handlers
- */
 function initTooltips() {
   document.addEventListener('click', (e) => {
     const helpIcon = e.target.closest('.help-icon');
@@ -5821,5 +5847,174 @@ function approvalDecisionErrorMessage(code = "", stage = "manager") {
   if (code === "approval_not_found") return "Schvalovací úkol nebyl nalezen nebo už byl vyřízen.";
   if (stage === "accounting") return "Rozhodnutí účetní se nepodařilo uložit.";
   return "Rozhodnutí se nepodařilo uložit.";
+}
+
+// ========================================
+// Help Panel (Bottom Sheet) + FAB
+// ========================================
+
+const HELP_CONTENT = [
+  {
+    title: "Jak vytvořit cestovní příkaz",
+    content: `
+      <p>Cestovní příkazy se vytváří ze schválených žádostí o vycestování:</p>
+      <ol>
+        <li>Klikněte na tlačítko <strong>"Nový"</strong> v seznamu cestovních příkazů</li>
+        <li>Vyberte schválenou žádost ze seznamu</li>
+        <li>Vyplňte detaily cesty a jednotlivé úseky trasy</li>
+        <li>Odešlete k schválení tlačítkem <strong>"Odeslat"</strong></li>
+      </ol>
+      <p>Pokud nemáte žádnou schválenou žádost, můžete:</p>
+      <ul>
+        <li>Duplikovat existující cestovní příkaz tlačítkem <strong>"Duplikovat"</strong></li>
+        <li>Nebo požádat o vytvoření nové žádosti o vycestování</li>
+      </ul>
+    `
+  },
+  {
+    title: "Jak vyplnit trasu cesty",
+    content: `
+      <p>Trasa se skládá z jednotlivých úseků, které reprezentují jednotlivé etapy vaší cesty:</p>
+      <ol>
+        <li>Klikněte na <strong>"+ Přidat úsek"</strong> pro vytvoření nového úseku</li>
+        <li>Vyplňte <strong>datum a čas</strong> odjezdu a příjezdu</li>
+        <li>Zadejte <strong>odkud</strong> a <strong>kam</strong> jedete (město, adresa)</li>
+        <li>Uveďte <strong>účel</strong> návštěvy a <strong>název firmy</strong></li>
+        <li>Vyberte <strong>typ dopravy</strong> (auto, vlak, letadlo, atd.)</li>
+      </ol>
+      <p><strong>Tip:</strong> Pokud jedete vlastním vozidlem, vyplňte počet kilometrů pro automatický výpočet náhrady.</p>
+    `
+  },
+  {
+    title: "Výdaje a náhrady",
+    content: `
+      <p>U každého úseku cesty můžete zadat jednotlivé výdaje:</p>
+      <ul>
+        <li><strong>Jízdné:</strong> Náklady na dopravu (vlak, letadlo, taxi, benzín)</li>
+        <li><strong>Nocležné:</strong> Náklady na ubytování</li>
+        <li><strong>Vedlejší výdaje:</strong> Parkování, telefon, drobné výdaje</li>
+        <li><strong>Jídla zdarma:</strong> Počet jídel poskytnutých zdarma (snižuje stravné)</li>
+      </ul>
+      <p><strong>Stravné</strong> se počítá automaticky podle délky cesty a typu úseku (tuzemsko/zahraničí).</p>
+      <p><strong>Náhrada za km:</strong> Při použití osobního vozidla se počítá podle základní sazby uvedené ve vašem profilu.</p>
+    `
+  },
+  {
+    title: "Stavy cestovního příkazu",
+    content: `
+      <dl>
+        <dt><strong>Rozpracováno</strong></dt>
+        <dd>Cestovní příkaz je v přípravě a ještě nebyl odeslán ke schválení. Můžete ho dále upravovat.</dd>
+
+        <dt><strong>Odesláno</strong></dt>
+        <dd>Cestovní příkaz čeká na schválení nadřízeným. Nelze ho již upravovat.</dd>
+
+        <dt><strong>Schváleno</strong></dt>
+        <dd>Cestovní příkaz byl schválen. Můžete vyrazit na cestu.</dd>
+
+        <dt><strong>Zamítnuto</strong></dt>
+        <dd>Cestovní příkaz nebyl schválen. Zkontrolujte poznámku schvalovatele.</dd>
+
+        <dt><strong>Importováno</strong></dt>
+        <dd>Cestovní příkaz byl přenesen do účetního systému (Helios).</dd>
+      </dl>
+    `
+  },
+  {
+    title: "Schvalování cestovních příkazů",
+    content: `
+      <p>Proces schvalování probíhá takto:</p>
+      <ol>
+        <li>Po odeslání cestovního příkazu obdrží <strong>schvalovatel</strong> notifikaci e-mailem</li>
+        <li>Schvalovatel zkontroluje detaily cesty a výdaje</li>
+        <li>Schvalovatel může příkaz:
+          <ul>
+            <li><strong>Schválit</strong> - cestovní příkaz je schválen</li>
+            <li><strong>Zamítnout</strong> - s povinnou poznámkou důvodu</li>
+            <li><strong>Vrátit k doplnění</strong> - vyžaduje úpravu</li>
+          </ul>
+        </li>
+        <li>O rozhodnutí obdržíte notifikaci e-mailem</li>
+      </ol>
+      <p><strong>Tip:</strong> Schvalovat můžete pouze pokud máte oprávnění schvalovatele.</p>
+    `
+  },
+  {
+    title: "Zahraniční cesty",
+    content: `
+      <p>Pro zahraniční cesty je třeba vyplnit dodatečné informace:</p>
+      <ul>
+        <li><strong>Typ úseku:</strong> Vyberte "Zahraničí" nebo "Zahraničí se stravným"</li>
+        <li><strong>Země:</strong> Vyberte navštívenou zemi ze seznamu</li>
+        <li><strong>Měna:</strong> Automaticky se doplní podle země</li>
+        <li><strong>Kurz:</strong> Zadejte směnný kurz a datum jeho platnosti</li>
+        <li><strong>Stravné v cizí měně:</strong> Automaticky se vypočte podle země</li>
+      </ul>
+      <p><strong>Pozor:</strong> Kurz měny musíte zadat ručně podle aktuálního kurzu ČNB.</p>
+    `
+  }
+];
+
+function initHelpPanel() {
+  // Create FAB button
+  const fab = document.createElement('button');
+  fab.id = 'helpFab';
+  fab.className = 'help-fab';
+  fab.innerHTML = '?';
+  fab.title = 'Nápověda';
+  fab.type = 'button';
+  fab.setAttribute('aria-label', 'Otevřít nápovědu');
+  document.body.appendChild(fab);
+
+  // Create bottom sheet
+  const sheet = document.createElement('div');
+  sheet.id = 'helpSheet';
+  sheet.className = 'help-sheet';
+  sheet.innerHTML = `
+    <div class="help-sheet-overlay"></div>
+    <div class="help-sheet-content">
+      <div class="help-sheet-header">
+        <h2>Nápověda</h2>
+        <button class="help-sheet-close" type="button" aria-label="Zavřít">×</button>
+      </div>
+      <div class="help-sheet-body">
+        ${HELP_CONTENT.map((section, index) => `
+          <details class="help-section" ${index === 0 ? 'open' : ''}>
+            <summary>${escapeHtml(section.title)}</summary>
+            <div class="help-section-content">${section.content}</div>
+          </details>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+
+  // Event handlers
+  fab.addEventListener('click', () => openHelpSheet());
+  sheet.querySelector('.help-sheet-overlay').addEventListener('click', () => closeHelpSheet());
+  sheet.querySelector('.help-sheet-close').addEventListener('click', () => closeHelpSheet());
+
+  // Close on Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sheet.classList.contains('help-sheet-open')) {
+      closeHelpSheet();
+    }
+  });
+}
+
+function openHelpSheet() {
+  const sheet = document.getElementById('helpSheet');
+  if (sheet) {
+    sheet.classList.add('help-sheet-open');
+    document.body.style.overflow = 'hidden'; // Prevent body scroll
+  }
+}
+
+function closeHelpSheet() {
+  const sheet = document.getElementById('helpSheet');
+  if (sheet) {
+    sheet.classList.remove('help-sheet-open');
+    document.body.style.overflow = ''; // Restore body scroll
+  }
 }
 
