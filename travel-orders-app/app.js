@@ -4628,21 +4628,147 @@ function workflowNote(action) {
   }[action] || "Změna stavu";
 }
 
-function duplicateOrder(order) {
-  const clone = structuredClone(order);
-  clone.id = newId();
-  clone.number = generateNumber();
-  clone.status = "draft";
-  clone.createdAt = new Date().toISOString();
-  clone.updatedAt = clone.createdAt;
-  clone.history = [{ at: clone.createdAt, status: "draft", note: "Duplikováno" }];
-  clone.routeLines = clone.routeLines.map((line) => ({ ...line, id: newId() }));
-  clone.attachments = (clone.attachments || []).map((attachment) => ({ ...attachment, id: newId() }));
-  stampOrderOwner(clone);
-  state.orders.unshift(clone);
-  state.selectedId = clone.id;
-  saveState();
-  render();
+async function duplicateOrder(order) {
+  // If API is available, check for approved travel requests
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  console.log("duplicateOrder: API_ENABLED=", API_ENABLED, "token=", token ? "exists" : "missing");
+  if (API_ENABLED && token) {
+    try {
+      const response = await fetch("/api/travel-requests/my/approved-without-order", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const availableRequests = await response.json();
+
+        if (!availableRequests || availableRequests.length === 0) {
+          alert("Nelze duplikovat cestovní příkaz - není dostupná žádná schválená žádost o služební cestu");
+          return;
+        }
+
+        // Show dialog to select travel request
+        const selectedRequest = await showTravelRequestSelectionDialog(availableRequests);
+        if (!selectedRequest) {
+          // User cancelled
+          return;
+        }
+
+        // Create duplicate with selected travel request
+        const clone = structuredClone(order);
+        clone.id = newId();
+        clone.number = generateNumber();
+        clone.status = "draft";
+
+        // Clear old travel request references and set new one
+        delete clone.travelRequestId;
+        delete clone.requestNo;
+        delete clone.serverId;
+        clone.travelRequestId = selectedRequest.id;
+
+        clone.createdAt = new Date().toISOString();
+        clone.updatedAt = clone.createdAt;
+        clone.history = [{ at: clone.createdAt, status: "draft", note: "Duplikováno" }];
+        clone.routeLines = clone.routeLines.map((line) => ({ ...line, id: newId() }));
+        clone.attachments = (clone.attachments || []).map((attachment) => ({ ...attachment, id: newId() }));
+        stampOrderOwner(clone);
+        state.orders.unshift(clone);
+        state.selectedId = clone.id;
+        saveState();
+        render();
+        return;
+      } else {
+        alert("Chyba při načítání schválených žádostí");
+        return;
+      }
+    } catch (error) {
+      console.error("Error fetching travel requests:", error);
+      alert("Chyba při duplikaci cestovního příkazu");
+      return;
+    }
+  }
+
+  // API není dostupné nebo uživatel není přihlášený
+  alert("Duplikace vyžaduje připojení k serveru a přihlášení");
+}
+
+function showTravelRequestSelectionDialog(requests) {
+  return new Promise((resolve) => {
+    const existing = document.getElementById("travelRequestSelectionOverlay");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "travelRequestSelectionOverlay";
+    overlay.className = "login-overlay";
+
+    const requestRows = requests.map((req) => {
+      const startAt = req.startAt ? new Date(req.startAt).toLocaleDateString("cs-CZ") : "";
+      const endAt = req.endAt ? new Date(req.endAt).toLocaleDateString("cs-CZ") : "";
+      const transport = req.transport || "neuvedeno";
+      return `
+        <div class="request-row" data-request-id="${escapeHtml(req.id)}">
+          <div>
+            <strong>${escapeHtml(req.requestNo || "")}</strong> - ${escapeHtml(req.destination || "")}
+          </div>
+          <div style="font-size: 0.9em; color: #666;">
+            ${startAt} – ${endAt} | Doprava: ${escapeHtml(transport)}
+          </div>
+          <div style="font-size: 0.85em; color: #777; margin-top: 4px;">
+            ${escapeHtml(req.purpose || "")}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    overlay.innerHTML = `
+      <div class="login-panel" style="max-width: 600px;">
+        <div>
+          <h2>Vyberte schválenou žádost o služební cestu</h2>
+          <p style="margin-top: 8px; color: #666;">Duplikace cestovního příkazu vyžaduje výběr schválené žádosti.</p>
+        </div>
+        <div class="request-list" style="max-height: 400px; overflow-y: auto; margin: 16px 0;">
+          ${requestRows}
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 16px;">
+          <button class="primary-btn" type="button" data-action="select" disabled>Vybrat</button>
+          <button class="secondary-btn" type="button" data-action="cancel">Zrušit</button>
+        </div>
+      </div>
+    `;
+
+    document.body.append(overlay);
+
+    let selectedRequestId = null;
+    const selectBtn = overlay.querySelector('[data-action="select"]');
+    const cancelBtn = overlay.querySelector('[data-action="cancel"]');
+    const rowElements = overlay.querySelectorAll(".request-row");
+
+    rowElements.forEach((row) => {
+      row.addEventListener("click", () => {
+        rowElements.forEach((r) => r.classList.remove("selected"));
+        row.classList.add("selected");
+        selectedRequestId = row.dataset.requestId;
+        selectBtn.disabled = false;
+      });
+    });
+
+    selectBtn.addEventListener("click", () => {
+      overlay.remove();
+      const selected = requests.find((r) => r.id === selectedRequestId);
+      resolve(selected);
+    });
+
+    cancelBtn.addEventListener("click", () => {
+      overlay.remove();
+      resolve(null);
+    });
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+        resolve(null);
+      }
+    });
+  });
 }
 
 async function deleteOrder(order) {

@@ -4876,6 +4876,30 @@ def save_travel_order_draft():
     order_no = ensure_unique_order_number(str(order.get("number") or "").strip(), existing_order_id)
     trip = order.get("trip") or {}
     snapshot = build_calculation_snapshot(order, calc)
+    travel_request_id = valid_uuid(order.get("travelRequestId") or "")
+
+    # Validate travel_request_id if provided (for duplicates from approved requests)
+    if travel_request_id:
+        request_check_sql = """
+          SELECT EXISTS(
+            SELECT 1
+            FROM travel.travel_request r
+            LEFT JOIN travel.travel_order o ON o.travel_request_id = r.id
+            WHERE r.id = :'request_id'::uuid
+              AND r.owner_user_id = :'user_id'::uuid
+              AND r.status = 'approved'
+              AND o.id IS NULL
+          ) AS is_valid;
+        """
+        request_check = run_psql_json(
+            request_check_sql,
+            {
+                "request_id": travel_request_id,
+                "user_id": user_id,
+            },
+        )
+        if not request_check.get("is_valid"):
+            return jsonify({"error": "invalid_travel_request"}), 400
 
     # Process route lines for draft (similar to submit but without validation)
     raw_lines = order.get("routeLines") if isinstance(order.get("routeLines"), list) else []
@@ -4933,6 +4957,7 @@ def save_travel_order_draft():
           order_no,
           owner_user_id,
           employee_profile_id,
+          travel_request_id,
           status,
           purpose,
           destination,
@@ -4951,6 +4976,7 @@ def save_travel_order_draft():
           :'order_no',
           :'owner_user_id'::uuid,
           (SELECT id FROM travel.employee_profile WHERE user_id = :'owner_user_id'::uuid LIMIT 1),
+          NULLIF(:'travel_request_id', '')::uuid,
           'draft',
           NULLIF(:'purpose', ''),
           NULLIF(:'destination', ''),
@@ -4967,6 +4993,7 @@ def save_travel_order_draft():
         ON CONFLICT (order_no) DO UPDATE
         SET owner_user_id = EXCLUDED.owner_user_id,
             employee_profile_id = EXCLUDED.employee_profile_id,
+            travel_request_id = EXCLUDED.travel_request_id,
             status = 'draft',
             purpose = EXCLUDED.purpose,
             destination = EXCLUDED.destination,
@@ -5165,6 +5192,7 @@ def save_travel_order_draft():
             "existing_order_id": existing_order_id or "",
             "order_no": order_no,
             "owner_user_id": user_id,
+            "travel_request_id": travel_request_id or "",
             "purpose": trip.get("purpose") or "",
             "destination": trip.get("destination") or "",
             "visited_companies": trip.get("visitedCompanies") or "",

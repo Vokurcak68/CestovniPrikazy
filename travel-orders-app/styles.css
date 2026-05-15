@@ -1051,6 +1051,26 @@ textarea:focus {
   color: var(--muted);
 }
 
+.request-row {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-bottom: 8px;
+}
+
+.request-row:hover {
+  background: #f8fbff;
+  border-color: var(--primary);
+}
+
+.request-row.selected {
+  background: #e8f3ff;
+  border-color: var(--primary);
+  border-width: 2px;
+}
+
 .return-notice {
   display: grid;
   gap: 8px;
