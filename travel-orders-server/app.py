@@ -6777,6 +6777,7 @@ def build_calculation_snapshot(order: dict, calc: dict) -> dict:
                 "fileName": attachment.get("fileName") or "",
                 "contentType": attachment.get("contentType") or "",
                 "byteSize": attachment.get("byteSize") or 0,
+                "dataUrl": attachment.get("dataUrl") or "",  # Preserve file content
                 "documentKind": attachment.get("documentKind") or "receipt",
                 "expenseKind": attachment.get("expenseKind") or "other",
                 "documentDate": attachment.get("documentDate") or "",

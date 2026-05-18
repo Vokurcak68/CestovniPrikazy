@@ -146,6 +146,7 @@ let foreignTravelState = {
   currencies: ["CZK"],
   message: "",
 };
+let attachmentFormVisible = false;
 
 const els = {
   form: document.getElementById("orderForm"),
@@ -269,6 +270,7 @@ async function startApp() {
       if (!item) return;
       appMode = "orders";
       state.selectedId = item.dataset.orderId;
+      attachmentFormVisible = false; // Hide attachment form when switching orders
       saveState();
       render();
     });
@@ -2314,6 +2316,31 @@ async function refreshNotificationBadge() {
   }
 }
 
+function mergeAttachments(localAttachments, serverAttachments) {
+  // If no server attachments, keep local ones
+  if (!Array.isArray(serverAttachments) || serverAttachments.length === 0) {
+    return localAttachments;
+  }
+
+  // If no local attachments, use server ones
+  if (!Array.isArray(localAttachments) || localAttachments.length === 0) {
+    return serverAttachments;
+  }
+
+  // Create a map of local attachments by ID for quick lookup
+  const localById = new Map(localAttachments.map(att => [att.id, att]));
+
+  // Merge: preserve local dataUrl if server doesn't have it
+  return serverAttachments.map(serverAtt => {
+    const localAtt = localById.get(serverAtt.id);
+    if (localAtt && localAtt.dataUrl && !serverAtt.dataUrl) {
+      // Keep the file content from local version
+      return { ...serverAtt, dataUrl: localAtt.dataUrl };
+    }
+    return serverAtt;
+  });
+}
+
 async function refreshOwnedOrderStatuses() {
   if (!API_ENABLED || !currentUser) return false;
 
@@ -2372,6 +2399,9 @@ async function refreshOwnedOrderStatuses() {
         changed = true;
       } else {
         // Update existing draft with server data
+        // Smart merge for attachments to preserve local dataUrl
+        const mergedAttachments = mergeAttachments(order.attachments, serverDraft.attachments);
+
         Object.assign(order, {
           number: serverDraft.number || order.number,
           employee: serverDraft.employee || order.employee,
@@ -2379,7 +2409,7 @@ async function refreshOwnedOrderStatuses() {
           approval: serverDraft.approval || order.approval,
           vehicle: serverDraft.vehicle || order.vehicle,
           routeLines: serverDraft.routeLines || order.routeLines,
-          attachments: serverDraft.attachments || order.attachments,
+          attachments: mergedAttachments,
           updatedAt: serverDraft.updatedAt || order.updatedAt,
         });
         changed = true;
@@ -2421,6 +2451,8 @@ async function refreshOwnedOrdersAndRender() {
   // Don't refresh if accountant is editing someone else's order
   const selectedOrder = state.orders.find((o) => o.id === state.selectedId);
   if (selectedOrder?._editingAsAccountant) return;
+  // Don't refresh if user is adding an attachment (form is open)
+  if (attachmentFormVisible) return;
   const changed = await refreshOwnedOrderStatuses();
   if (changed) render();
 }
@@ -3631,13 +3663,18 @@ function documentsSection(order) {
     ? order.attachments.map((attachment) => attachmentCard(attachment)).join("")
     : `<div class="empty-inline">Zatím bez přiložených dokladů.</div>`;
 
+  const formDisplay = attachmentFormVisible ? "grid" : "none";
+
   return `
     <section class="section">
       <div class="section-header">
         <h3>Doklady a přílohy</h3>
+        <div class="section-actions">
+          <button type="button" class="secondary-btn" data-action="show-attachment-form">+ Přidat přílohu</button>
+        </div>
       </div>
       <div class="section-body">
-        <div class="document-upload-grid">
+        <div class="document-upload-grid" data-attachment-form style="display: ${formDisplay};">
           <label>
             <span>Typ výdaje</span>
             <select data-attachment-meta="expenseKind">${optionsHtml(EXPENSE_KIND_OPTIONS, "fuel")}</select>
@@ -3672,8 +3709,13 @@ function documentsSection(order) {
           </label>
           <label class="wide file-picker">
             <span>Přiložit soubor</span>
-            <input data-attachment-file type="file" multiple accept="image/*,.pdf,.txt,.csv,.doc,.docx,.xls,.xlsx" />
+            <input data-attachment-file type="file" accept="image/*,.pdf,.txt,.csv,.doc,.docx,.xls,.xlsx" />
+            <span class="file-name" data-file-name>Nevybrán žádný soubor</span>
           </label>
+          <div class="wide" style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+            <button type="button" class="secondary-btn" data-action="cancel-attachment">Zrušit</button>
+            <button type="button" class="primary-btn" data-action="save-attachment">Uložit přílohu</button>
+          </div>
         </div>
         <div class="attachment-list">${attachmentCards}</div>
       </div>
@@ -3951,14 +3993,14 @@ async function handleFormInput(event) {
   const attachmentInput = event.target.closest("[data-attachment-file]");
   if (attachmentInput) {
     if (event.type !== "change") return;
-    if (blockLockedOrderEdit(order)) return;
-    await addAttachmentFiles(order, attachmentInput);
-    attachmentInput.value = "";
-    touch(order);
-    saveState();
-    queueDraftSync(order);
-    renderForm();
-    renderList();
+    // Just show the file name, don't save yet
+    const form = attachmentInput.closest("[data-attachment-form]");
+    const fileNameDisplay = form?.querySelector("[data-file-name]");
+    if (fileNameDisplay && attachmentInput.files?.length) {
+      fileNameDisplay.textContent = attachmentInput.files[0].name;
+    } else if (fileNameDisplay) {
+      fileNameDisplay.textContent = "Nevybrán žádný soubor";
+    }
     return;
   }
 
@@ -4229,6 +4271,7 @@ async function handleFormClick(event) {
   if (tabBtn) {
     const tabbar = tabBtn.closest(".tabbar");
     activeTab = tabBtn.dataset.tab;
+    attachmentFormVisible = false; // Hide attachment form when switching tabs
     renderForm({
       tabScrollLeft: tabbar?.scrollLeft || 0,
       revealActiveTab: true,
@@ -4270,7 +4313,61 @@ async function handleFormClick(event) {
   if (!actionBtn) return;
 
   const action = actionBtn.dataset.action;
-  if (action === "add-line") {
+  if (action === "show-attachment-form") {
+    attachmentFormVisible = true;
+    const form = document.querySelector("[data-attachment-form]");
+    if (form) {
+      form.style.display = "grid";
+      // Reset form fields
+      form.querySelectorAll("input, select").forEach((field) => {
+        if (field.type === "file") {
+          field.value = "";
+          const fileName = form.querySelector("[data-file-name]");
+          if (fileName) fileName.textContent = "Nevybrán žádný soubor";
+        } else if (field.dataset.attachmentMeta === "documentDate") {
+          field.value = todayString();
+        } else if (field.dataset.attachmentMeta === "amount") {
+          field.value = "0";
+        } else if (field.dataset.attachmentMeta === "exchangeRate") {
+          field.value = "1";
+        } else if (field.dataset.attachmentMeta === "description") {
+          field.value = "";
+        } else if (field.dataset.attachmentMeta === "expenseKind") {
+          field.value = "fuel";
+        } else if (field.dataset.attachmentMeta === "documentKind") {
+          field.value = "receipt";
+        } else if (field.dataset.attachmentMeta === "currencyCode") {
+          field.value = order.trip.currencyCode || "CZK";
+        } else if (field.dataset.attachmentMeta === "heliosExpenseCodeId") {
+          field.value = "";
+        }
+      });
+    }
+    return;
+  } else if (action === "cancel-attachment") {
+    attachmentFormVisible = false;
+    const form = document.querySelector("[data-attachment-form]");
+    if (form) form.style.display = "none";
+    return;
+  } else if (action === "save-attachment") {
+    if (blockLockedOrderEdit(order)) return;
+    const form = document.querySelector("[data-attachment-form]");
+    const fileInput = form?.querySelector("[data-attachment-file]");
+    if (!fileInput?.files?.length) {
+      alert("Vyberte prosím soubor k nahrání.");
+      return;
+    }
+    await addAttachmentFiles(order, fileInput);
+    touch(order);
+    saveState();
+    queueDraftSync(order);
+    attachmentFormVisible = false;
+    // Hide form and update UI
+    if (form) form.style.display = "none";
+    renderForm();
+    renderList();
+    return;
+  } else if (action === "add-line") {
     if (blockLockedOrderEdit(order)) return;
     const newLine = createNextLine(order);
     order.routeLines.push(newLine);

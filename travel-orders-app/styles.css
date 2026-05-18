@@ -688,9 +688,22 @@ textarea:focus {
   gap: 12px;
 }
 
+.file-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .file-picker input {
   padding: 7px;
   background: #f8fbff;
+}
+
+.file-picker .file-name {
+  font-size: 0.85rem;
+  color: #666;
+  font-style: italic;
+  margin-top: 2px;
 }
 
 .attachment-list {
