@@ -2166,7 +2166,7 @@ def helios_order_preview():
     return Response(render_helios_preview_html(order), mimetype="text/html; charset=utf-8")
 
 
-@app.get("/attachments/<travel_order_id>/<attachment_id>")
+@app.get("/api/attachments/<travel_order_id>/<attachment_id>")
 @require_auth
 def get_travel_order_attachment(travel_order_id, attachment_id):
     """Download or view attachment file"""
@@ -2178,16 +2178,19 @@ def get_travel_order_attachment(travel_order_id, attachment_id):
 
     # Check if user has access to this order (owner or approver)
     access_check_sql = """
-      SELECT EXISTS(
-        SELECT 1
-        FROM travel.travel_order o
-        LEFT JOIN travel.approval_request ar ON ar.travel_order_id = o.id
-        WHERE o.id = :'travel_order_id'::uuid
-          AND (
-            o.owner_user_id = :'user_id'::uuid
-            OR ar.approver_user_id = :'user_id'::uuid
-          )
-      ) AS has_access;
+      SELECT jsonb_build_object(
+        'has_access',
+        EXISTS(
+          SELECT 1
+          FROM travel.travel_order o
+          LEFT JOIN travel.approval_request ar ON ar.travel_order_id = o.id
+          WHERE o.id = :'travel_order_id'::uuid
+            AND (
+              o.owner_user_id = :'user_id'::uuid
+              OR ar.approver_user_id = :'user_id'::uuid
+            )
+        )
+      )::text;
     """
     access = run_psql_json(access_check_sql, {"travel_order_id": order_id, "user_id": user_id})
     if not access.get("has_access"):

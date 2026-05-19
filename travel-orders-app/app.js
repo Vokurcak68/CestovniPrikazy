@@ -3016,7 +3016,7 @@ function approvalAttachmentRow(attachment, orderId) {
     ? `<small>Cena za litr: ${escapeHtml(formatCurrency(attachment.fuelPricePerLiter))}</small>`
     : "";
   const viewLink = attachment.id && orderId
-    ? `<a href="/attachments/${escapeHtml(orderId)}/${escapeHtml(attachment.id)}" target="_blank" class="secondary-btn small">Zobrazit</a>`
+    ? `<button type="button" class="secondary-btn small" data-action="view-attachment" data-order-id="${escapeHtml(orderId)}" data-attachment-id="${escapeHtml(attachment.id)}">Zobrazit</button>`
     : "";
   return `
     <div class="approval-attachment">
@@ -4209,6 +4209,27 @@ async function openOrderForEdit(travelOrderId) {
 }
 
 async function handleFormClick(event) {
+  const viewAttachment = event.target.closest("[data-action='view-attachment']");
+  if (viewAttachment) {
+    const orderId = viewAttachment.dataset.orderId;
+    const attachmentId = viewAttachment.dataset.attachmentId;
+    if (orderId && attachmentId) {
+      try {
+        const token = localStorage.getItem(AUTH_TOKEN_KEY);
+        const response = await fetch(`/api/attachments/${orderId}/${attachmentId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error("Nepodařilo se načíst přílohu");
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+      } catch (err) {
+        alert("Chyba při načítání přílohy: " + err.message);
+      }
+    }
+    return;
+  }
+
   const requestAction = event.target.closest("[data-request-action]");
   if (requestAction) {
     if (requestAction.dataset.requestAction === "save") {
