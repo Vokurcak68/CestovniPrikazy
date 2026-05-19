@@ -679,7 +679,7 @@ def register():
 def verify_email():
     token = str(request.args.get("token") or "").strip()
     if not token:
-        return "ChybĂ­ ovÄ›Ĺ™ovacĂ­ token.", 400
+        return "Chybí ověřovací token.", 400
     hashed = token_hash(token)
     sql = """
       WITH selected AS (
@@ -2231,7 +2231,7 @@ def helios_order_preview_attachment(travel_order_id, attachment_id):
     order_id = valid_uuid(travel_order_id)
     file_id = valid_uuid(attachment_id)
     if not order_id or not file_id:
-        return Response("NeplatnĂ˝ identifikĂˇtor pĹ™Ă­lohy.", status=400, mimetype="text/plain")
+        return Response("Neplatný identifikátor přílohy.", status=400, mimetype="text/plain")
 
     sql = """
       SELECT COALESCE(to_jsonb(t), '{}'::jsonb)::text
@@ -2247,7 +2247,7 @@ def helios_order_preview_attachment(travel_order_id, attachment_id):
     """
     attachment = run_psql_json(sql, {"travel_order_id": order_id, "attachment_id": file_id})
     if not attachment:
-        return Response("PĹ™Ă­loha nebyla nalezena.", status=404, mimetype="text/plain")
+        return Response("Příloha nebyla nalezena.", status=404, mimetype="text/plain")
 
     target = (ATTACHMENT_DIR / attachment["storage_key"]).resolve()
     attachment_root = ATTACHMENT_DIR.resolve()
@@ -2737,20 +2737,27 @@ def render_preview_attachment(order_id: str, token: str, attachment: dict) -> st
     elif content_type == "application/pdf" or file_name.lower().endswith(".pdf"):
         preview = f'<iframe src="{escape_html(url)}" title="{escape_html(file_name)}"></iframe>'
 
+    fuel_price_line = ""
+    if attachment.get("expenseKind") == "fuel" and attachment.get("fuelPricePerLiter"):
+        fuel_price = float(attachment.get("fuelPricePerLiter") or 0)
+        if fuel_price > 0:
+            fuel_price_line = f'<p><strong>Cena za litr: {escape_html(format_money(fuel_price))}</strong></p>'
+
     return f"""
       <section class="attachment">
         <h3>{escape_html(file_name)}</h3>
         <p class="muted">
           {escape_html(expense_kind_label(attachment.get("expenseKind")))}
-          Â· {escape_html(document_kind_label(attachment.get("documentKind")))}
-          Â· {escape_html(format_date(attachment.get("documentDate")))}
+          · {escape_html(document_kind_label(attachment.get("documentKind")))}
+          · {escape_html(format_date(attachment.get("documentDate")))}
         </p>
         <p>
           <strong>{escape_html(format_money(attachment.get("amount"), attachment.get("currencyCode")))}</strong>
-          <span class="muted">pĹ™epoÄŤet {escape_html(format_money(attachment.get("amountCzk")))}</span>
+          <span class="muted">přepočet {escape_html(format_money(attachment.get("amountCzk")))}</span>
         </p>
+        {fuel_price_line}
         {f'<p>{escape_html(attachment.get("description"))}</p>' if attachment.get("description") else ''}
-        <a class="button" href="{escape_html(url)}" target="_blank" rel="noopener">OtevĹ™Ă­t soubor</a>
+        <a class="button" href="{escape_html(url)}" target="_blank" rel="noopener">Otevřít soubor</a>
         {preview}
       </section>
     """
@@ -2769,7 +2776,7 @@ def escape_html(value: object) -> str:
 
 
 def join_nonempty(*values: object) -> str:
-    return " Â· ".join(str(value) for value in values if value not in (None, ""))
+    return " · ".join(str(value) for value in values if value not in (None, ""))
 
 
 def format_datetime(value: object) -> str:
@@ -3262,7 +3269,25 @@ def helios_import_candidates():
                   END,
                 'SPZ', COALESCE(total.calculation_snapshot #>> '{order,vehicle,plate}', ''),
                 'Spotreba', NULLIF(total.calculation_snapshot #>> '{order,vehicle,consumption}', '')::numeric,
-                'CenaL', NULLIF(total.calculation_snapshot #>> '{order,vehicle,fuelPrice}', '')::numeric,
+                'CenaL', COALESCE(
+                  (
+                    SELECT attachment.fuel_price_per_liter
+                    FROM travel.travel_attachment attachment
+                    WHERE attachment.travel_order_id = o.id
+                      AND attachment.expense_kind = 'fuel'
+                      AND attachment.fuel_price_per_liter > 0
+                      AND attachment.document_date IS NOT NULL
+                      AND EXISTS (
+                        SELECT 1
+                        FROM travel.travel_route_line line
+                        WHERE line.travel_order_id = o.id
+                          AND date(line.start_at) = attachment.document_date
+                      )
+                    ORDER BY attachment.uploaded_at
+                    LIMIT 1
+                  ),
+                  NULLIF(total.calculation_snapshot #>> '{order,vehicle,fuelPrice}', '')::numeric
+                ),
                 'SazbaKM', NULLIF(total.calculation_snapshot #>> '{order,vehicle,basicKmRate}', '')::numeric,
                 'SDPlati', 'O',
                 'ProcKapes', 0,
@@ -4962,7 +4987,7 @@ def save_travel_order_draft():
             {
                 "request_id": travel_request_id,
                 "user_id": user_id,
-                "existing_order_id": existing_order_id or "",
+                "existing_order_id": existing_order_id or "00000000-0000-0000-0000-000000000000",
             },
         )
         if not request_check.get("is_valid"):

@@ -3765,6 +3765,9 @@ function attachmentCard(attachment) {
   const fuelPriceInfo = attachment.expenseKind === "fuel" && attachment.fuelPricePerLiter > 0
     ? ` · <strong>Cena: ${formatCurrency(attachment.fuelPricePerLiter)}/l</strong>`
     : "";
+  const viewButton = attachment.id && state.selectedId
+    ? `<button type="button" class="secondary-btn" data-action="view-attachment" data-order-id="${escapeHtml(state.selectedId)}" data-attachment-id="${escapeHtml(attachment.id)}">Zobrazit</button>`
+    : "";
   return `
     <article class="attachment-card" data-attachment-id="${escapeHtml(attachment.id)}">
       <div>
@@ -3779,6 +3782,7 @@ function attachmentCard(attachment) {
         ${attachment.description ? `<p>${escapeHtml(attachment.description)}</p>` : ""}
       </div>
       <div class="attachment-actions">
+        ${viewButton}
         ${download}
         <button class="table-icon-btn" data-remove-attachment type="button" title="Odebrat doklad" aria-label="Odebrat doklad">×</button>
       </div>
@@ -4863,8 +4867,12 @@ async function duplicateOrder(order) {
         delete clone.travelRequestId;
         delete clone.requestNo;
         delete clone.heliosId;
+        delete clone.heliosDocumentId;
+        delete clone.heliosExportedAt;
         delete clone.importedAt;
         delete clone.exportedAt;
+        delete clone.exportStatus;
+        delete clone.approvalStage;
         delete clone.approvedAt;
         delete clone.submittedAt;
         delete clone.rejectedAt;
