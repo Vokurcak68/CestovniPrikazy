@@ -2166,7 +2166,7 @@ def helios_order_preview():
     return Response(render_helios_preview_html(order), mimetype="text/html; charset=utf-8")
 
 
-@app.get("/api/travel-orders/<travel_order_id>/attachments/<attachment_id>")
+@app.get("/attachments/<travel_order_id>/<attachment_id>")
 @require_auth
 def get_travel_order_attachment(travel_order_id, attachment_id):
     """Download or view attachment file"""

@@ -3016,7 +3016,7 @@ function approvalAttachmentRow(attachment, orderId) {
     ? `<small>Cena za litr: ${escapeHtml(formatCurrency(attachment.fuelPricePerLiter))}</small>`
     : "";
   const viewLink = attachment.id && orderId
-    ? `<a href="/api/travel-orders/${escapeHtml(orderId)}/attachments/${escapeHtml(attachment.id)}" target="_blank" class="secondary-btn small">Zobrazit</a>`
+    ? `<a href="/attachments/${escapeHtml(orderId)}/${escapeHtml(attachment.id)}" target="_blank" class="secondary-btn small">Zobrazit</a>`
     : "";
   return `
     <div class="approval-attachment">
