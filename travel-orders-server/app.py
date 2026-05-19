@@ -2166,6 +2166,62 @@ def helios_order_preview():
     return Response(render_helios_preview_html(order), mimetype="text/html; charset=utf-8")
 
 
+@app.get("/api/travel-orders/<travel_order_id>/attachments/<attachment_id>")
+@require_auth
+def get_travel_order_attachment(travel_order_id, attachment_id):
+    """Download or view attachment file"""
+    user_id = request.current_user["user_id"]
+    order_id = valid_uuid(travel_order_id)
+    file_id = valid_uuid(attachment_id)
+    if not order_id or not file_id:
+        return Response("Neplatný identifikátor přílohy.", status=400, mimetype="text/plain")
+
+    # Check if user has access to this order (owner or approver)
+    access_check_sql = """
+      SELECT EXISTS(
+        SELECT 1
+        FROM travel.travel_order o
+        LEFT JOIN travel.approval_request ar ON ar.travel_order_id = o.id
+        WHERE o.id = :'travel_order_id'::uuid
+          AND (
+            o.owner_user_id = :'user_id'::uuid
+            OR ar.approver_user_id = :'user_id'::uuid
+          )
+      ) AS has_access;
+    """
+    access = run_psql_json(access_check_sql, {"travel_order_id": order_id, "user_id": user_id})
+    if not access.get("has_access"):
+        return Response("Nemáte oprávnění k této příloze.", status=403, mimetype="text/plain")
+
+    sql = """
+      SELECT COALESCE(to_jsonb(t), '{}'::jsonb)::text
+      FROM (
+        SELECT
+          attachment.file_name,
+          attachment.content_type,
+          attachment.storage_key
+        FROM travel.travel_attachment attachment
+        WHERE attachment.travel_order_id = :'travel_order_id'::uuid
+          AND attachment.id = :'attachment_id'::uuid
+      ) t;
+    """
+    attachment = run_psql_json(sql, {"travel_order_id": order_id, "attachment_id": file_id})
+    if not attachment:
+        return Response("Příloha nebyla nalezena.", status=404, mimetype="text/plain")
+
+    target = (ATTACHMENT_DIR / attachment["storage_key"]).resolve()
+    attachment_root = ATTACHMENT_DIR.resolve()
+    if attachment_root not in target.parents or not target.exists():
+        return Response("Soubor přílohy nebyl nalezen.", status=404, mimetype="text/plain")
+
+    return send_file(
+        target,
+        mimetype=attachment.get("content_type") or "application/octet-stream",
+        download_name=attachment.get("file_name") or "doklad",
+        as_attachment=False,
+    )
+
+
 @app.get("/helios/preview/<travel_order_id>/attachments/<attachment_id>")
 @require_helios_preview_access
 def helios_order_preview_attachment(travel_order_id, attachment_id):

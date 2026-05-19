@@ -2940,7 +2940,7 @@ function approvalDetailSection(detail) {
 
         <div class="detail-panel">
           <h4>Doklady</h4>
-          ${attachments.length ? attachments.map(approvalAttachmentRow).join("") : `<p class="note">K příkazu nejsou přiložené doklady.</p>`}
+          ${attachments.length ? attachments.map(att => approvalAttachmentRow(att, order.id)).join("") : `<p class="note">K příkazu nejsou přiložené doklady.</p>`}
         </div>
       </div>
     </section>
@@ -3011,9 +3011,12 @@ function approvalRouteRows(detail) {
   });
 }
 
-function approvalAttachmentRow(attachment) {
+function approvalAttachmentRow(attachment, orderId) {
   const fuelPriceInfo = attachment.expenseKind === "fuel" && attachment.fuelPricePerLiter > 0
     ? `<small>Cena za litr: ${escapeHtml(formatCurrency(attachment.fuelPricePerLiter))}</small>`
+    : "";
+  const viewLink = attachment.id && orderId
+    ? `<a href="/api/travel-orders/${escapeHtml(orderId)}/attachments/${escapeHtml(attachment.id)}" target="_blank" class="secondary-btn small">Zobrazit</a>`
     : "";
   return `
     <div class="approval-attachment">
@@ -3027,6 +3030,7 @@ function approvalAttachmentRow(attachment) {
         <small>Přepočet ${escapeHtml(formatCurrency(attachmentAmountCzk(attachment)))}</small>
         ${fuelPriceInfo}
         <small>${escapeHtml(formatBytes(attachment.byteSize || 0))}</small>
+        ${viewLink}
       </div>
     </div>
   `;
