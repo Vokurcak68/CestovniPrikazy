@@ -3012,6 +3012,9 @@ function approvalRouteRows(detail) {
 }
 
 function approvalAttachmentRow(attachment) {
+  const fuelPriceInfo = attachment.expenseKind === "fuel" && attachment.fuelPricePerLiter > 0
+    ? `<small>Cena za litr: ${escapeHtml(formatCurrency(attachment.fuelPricePerLiter))}</small>`
+    : "";
   return `
     <div class="approval-attachment">
       <div>
@@ -3022,6 +3025,7 @@ function approvalAttachmentRow(attachment) {
         <span>${escapeHtml(attachment.documentDate || "bez data")}</span>
         <strong>${formatAttachmentAmount(attachment)}</strong>
         <small>Přepočet ${escapeHtml(formatCurrency(attachmentAmountCzk(attachment)))}</small>
+        ${fuelPriceInfo}
         <small>${escapeHtml(formatBytes(attachment.byteSize || 0))}</small>
       </div>
     </div>
