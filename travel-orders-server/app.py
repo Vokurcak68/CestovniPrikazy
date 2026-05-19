@@ -1899,6 +1899,7 @@ def approval_request_detail(approval_request_id):
                 attachment.file_name AS "fileName",
                 attachment.helios_expense_code_id AS "heliosExpenseCodeId",
                 attachment.helios_expense_code_label AS "heliosExpenseCodeLabel",
+                attachment.fuel_price_per_liter AS "fuelPricePerLiter",
                 attachment.content_type AS "contentType",
                 attachment.byte_size AS "byteSize",
                 attachment.sha256,
@@ -2339,6 +2340,7 @@ def load_helios_preview_order(import_id: str) -> dict | None:
                 'fileName', attachment.file_name,
                 'heliosExpenseCodeId', attachment.helios_expense_code_id,
                 'heliosExpenseCodeLabel', attachment.helios_expense_code_label,
+                'fuelPricePerLiter', attachment.fuel_price_per_liter,
                 'contentType', attachment.content_type,
                 'byteSize', attachment.byte_size,
                 'uploadedAt', attachment.uploaded_at
@@ -3106,6 +3108,7 @@ def helios_import_candidates():
                   'fileName', attachment.file_name,
                   'heliosExpenseCodeId', attachment.helios_expense_code_id,
                   'heliosExpenseCodeLabel', attachment.helios_expense_code_label,
+                  'fuelPricePerLiter', attachment.fuel_price_per_liter,
                   'contentType', attachment.content_type,
                   'byteSize', attachment.byte_size,
                   'sha256', attachment.sha256,
@@ -4887,7 +4890,7 @@ def save_travel_order_draft():
             EXISTS(
               SELECT 1
               FROM travel.travel_request r
-              LEFT JOIN travel.travel_order o ON o.travel_request_id = r.id
+              LEFT JOIN travel.travel_order o ON o.travel_request_id = r.id AND o.id != COALESCE(:'existing_order_id'::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
               WHERE r.id = :'request_id'::uuid
                 AND r.owner_user_id = :'user_id'::uuid
                 AND r.status = 'approved'
@@ -4900,6 +4903,7 @@ def save_travel_order_draft():
             {
                 "request_id": travel_request_id,
                 "user_id": user_id,
+                "existing_order_id": existing_order_id or "",
             },
         )
         if not request_check.get("is_valid"):
@@ -5221,7 +5225,26 @@ def save_travel_order_draft():
         },
     )
     if not saved:
-        return jsonify({"error": "save_draft_failed"}), 400
+        print("❌ SAVE DRAFT FAILED: saved is None or False", flush=True)
+        return jsonify({"error": "save_draft_failed", "debug": "saved_is_none_or_false"}), 400
+
+    # Save attachments to travel_attachment table
+    if saved and saved.get("travel_order_id"):
+        try:
+            print(f"💾 Saving attachments for order {saved['travel_order_id']}", flush=True)
+            print(f"📎 Attachments count: {len(order.get('attachments') or [])}", flush=True)
+            result = save_order_attachments(
+                saved["travel_order_id"],
+                order.get("attachments") or [],
+                user_id,
+            )
+            print(f"✅ Attachments saved: {result}", flush=True)
+        except Exception as e:
+            print(f"❌ ERROR saving attachments: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": "attachment_save_failed", "debug": str(e)}), 400
+
     return jsonify({"saved": saved})
 
 
@@ -5240,7 +5263,38 @@ def get_my_draft_orders():
           o.status::text AS status,
           o.created_at,
           o.updated_at,
-          tot.calculation_snapshot
+          tot.calculation_snapshot,
+          COALESCE((
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'id', attachment.client_attachment_id,
+                'documentKind', attachment.document_kind,
+                'expenseKind', attachment.expense_kind,
+                'description', attachment.description,
+                'documentDate', attachment.document_date,
+                'amount', attachment.amount,
+                'currencyCode', attachment.currency_code,
+                'exchangeRate', attachment.exchange_rate,
+                'amountCzk', COALESCE(
+                  attachment.amount_czk,
+                  attachment.amount * CASE
+                    WHEN COALESCE(attachment.currency_code, 'CZK') = 'CZK' THEN 1
+                    ELSE COALESCE(attachment.exchange_rate, 1)
+                  END
+                ),
+                'fileName', attachment.file_name,
+                'heliosExpenseCodeId', attachment.helios_expense_code_id,
+                'heliosExpenseCodeLabel', attachment.helios_expense_code_label,
+                'fuelPricePerLiter', attachment.fuel_price_per_liter,
+                'contentType', attachment.content_type,
+                'byteSize', attachment.byte_size,
+                'uploadedAt', attachment.uploaded_at
+              )
+              ORDER BY attachment.uploaded_at
+            )
+            FROM travel.travel_attachment attachment
+            WHERE attachment.travel_order_id = o.id
+          ), '[]'::jsonb) AS attachments_from_db
         FROM travel.travel_order o
         LEFT JOIN travel.travel_order_total tot ON tot.travel_order_id = o.id
         WHERE o.owner_user_id = :'user_id'::uuid
@@ -5259,6 +5313,9 @@ def get_my_draft_orders():
         order_data = snapshot.get("order") or {}
         calc_data = snapshot.get("calculation") or {}
 
+        # Use attachments from database instead of snapshot (which may be outdated)
+        attachments_from_db = draft.get("attachments_from_db") or []
+
         # Build the order object that the frontend expects
         order = {
             "id": "",  # Frontend will generate a new client-side ID
@@ -5272,7 +5329,7 @@ def get_my_draft_orders():
             "approval": order_data.get("approval") or {},
             "vehicle": order_data.get("vehicle") or {},
             "routeLines": order_data.get("routeLines") or [],
-            "attachments": order_data.get("attachments") or [],
+            "attachments": attachments_from_db,  # Use fresh data from DB, not snapshot
             "history": [{"at": draft.get("created_at") or "", "status": "draft", "note": "Založeno"}],
         }
         orders.append({"order": order, "calculation": calc_data})
@@ -6771,6 +6828,9 @@ def build_calculation_snapshot(order: dict, calc: dict) -> dict:
             continue
         currency_code = normalize_currency_code(attachment.get("currencyCode"))
         exchange_rate = "1" if currency_code == "CZK" else number_like(attachment.get("exchangeRate") or 1)
+        expense_kind = attachment.get("expenseKind") or "other"
+        fuel_price_per_liter = number_like(attachment.get("fuelPricePerLiter")) if expense_kind == "fuel" else 0
+
         attachments.append(
             {
                 "id": attachment.get("id") or "",
@@ -6779,7 +6839,7 @@ def build_calculation_snapshot(order: dict, calc: dict) -> dict:
                 "byteSize": attachment.get("byteSize") or 0,
                 "dataUrl": attachment.get("dataUrl") or "",  # Preserve file content
                 "documentKind": attachment.get("documentKind") or "receipt",
-                "expenseKind": attachment.get("expenseKind") or "other",
+                "expenseKind": expense_kind,
                 "documentDate": attachment.get("documentDate") or "",
                 "amount": number_like(attachment.get("amount")),
                 "currencyCode": currency_code,
@@ -6788,6 +6848,7 @@ def build_calculation_snapshot(order: dict, calc: dict) -> dict:
                 "heliosExpenseCodeId": integer_like(attachment.get("heliosExpenseCodeId")),
                 "heliosExpenseCodeLabel": attachment.get("heliosExpenseCodeLabel") or "",
                 "description": attachment.get("description") or "",
+                "fuelPricePerLiter": fuel_price_per_liter,
             }
         )
 
@@ -6903,6 +6964,7 @@ def save_order_attachments(travel_order_id: str, attachments: list[dict], user_i
               amount_czk,
               helios_expense_code_id,
               helios_expense_code_label,
+              fuel_price_per_liter,
               file_name,
               content_type,
               byte_size,
@@ -6923,6 +6985,7 @@ def save_order_attachments(travel_order_id: str, attachments: list[dict], user_i
               :'amount_czk'::numeric,
               NULLIF(:'helios_expense_code_id', '')::integer,
               NULLIF(:'helios_expense_code_label', ''),
+              :'fuel_price_per_liter'::numeric,
               :'file_name',
               NULLIF(:'content_type', ''),
               :'byte_size'::bigint,
@@ -6943,6 +7006,7 @@ def save_order_attachments(travel_order_id: str, attachments: list[dict], user_i
               amount_czk = EXCLUDED.amount_czk,
               helios_expense_code_id = EXCLUDED.helios_expense_code_id,
               helios_expense_code_label = EXCLUDED.helios_expense_code_label,
+              fuel_price_per_liter = EXCLUDED.fuel_price_per_liter,
               file_name = EXCLUDED.file_name,
               content_type = EXCLUDED.content_type,
               byte_size = EXCLUDED.byte_size,
@@ -6969,6 +7033,7 @@ def save_order_attachments(travel_order_id: str, attachments: list[dict], user_i
                 "amount_czk": item["amount_czk"],
                 "helios_expense_code_id": item["helios_expense_code_id"],
                 "helios_expense_code_label": item["helios_expense_code_label"],
+                "fuel_price_per_liter": item["fuel_price_per_liter"],
                 "file_name": item["file_name"],
                 "content_type": item["content_type"],
                 "byte_size": len(item["bytes"]),
@@ -6984,7 +7049,7 @@ def save_order_attachments(travel_order_id: str, attachments: list[dict], user_i
 
 def parse_existing_attachment(raw: dict) -> dict | None:
     attachment_id = valid_uuid(raw.get("id"))
-    client_id = str(raw.get("clientAttachmentId") or "").strip()
+    client_id = str(raw.get("clientAttachmentId") or raw.get("id") or "").strip()
     if not attachment_id and not client_id:
         return None
 
@@ -6999,6 +7064,7 @@ def parse_existing_attachment(raw: dict) -> dict | None:
         document_date = ""
     currency_code = normalize_currency_code(raw.get("currencyCode") or raw.get("currency_code"))
     exchange_rate = "1" if currency_code == "CZK" else positive_number_like(raw.get("exchangeRate") or raw.get("exchange_rate"), 1)
+    fuel_price_per_liter = number_like(raw.get("fuelPricePerLiter")) if expense_kind == "fuel" else 0
 
     return {
         "attachment_id": attachment_id or "",
@@ -7013,6 +7079,7 @@ def parse_existing_attachment(raw: dict) -> dict | None:
         "amount_czk": attachment_amount_czk({**raw, "currencyCode": currency_code, "exchangeRate": exchange_rate}),
         "helios_expense_code_id": integer_like(raw.get("heliosExpenseCodeId") or raw.get("helios_expense_code_id")),
         "helios_expense_code_label": str(raw.get("heliosExpenseCodeLabel") or raw.get("helios_expense_code_label") or "").strip()[:100],
+        "fuel_price_per_liter": fuel_price_per_liter,
     }
 
 
@@ -7029,7 +7096,8 @@ def update_existing_attachment(travel_order_id: str, item: dict) -> None:
             exchange_rate = :'exchange_rate'::numeric,
             amount_czk = :'amount_czk'::numeric,
             helios_expense_code_id = NULLIF(:'helios_expense_code_id', '')::integer,
-            helios_expense_code_label = NULLIF(:'helios_expense_code_label', '')
+            helios_expense_code_label = NULLIF(:'helios_expense_code_label', ''),
+            fuel_price_per_liter = :'fuel_price_per_liter'::numeric
         WHERE travel_order_id = :'travel_order_id'::uuid
           AND (
             (NULLIF(:'attachment_id', '')::uuid IS NOT NULL AND id = NULLIF(:'attachment_id', '')::uuid)
@@ -7055,6 +7123,7 @@ def update_existing_attachment(travel_order_id: str, item: dict) -> None:
             "amount_czk": item["amount_czk"],
             "helios_expense_code_id": item["helios_expense_code_id"],
             "helios_expense_code_label": item["helios_expense_code_label"],
+            "fuel_price_per_liter": item["fuel_price_per_liter"],
         },
     )
 
@@ -7093,6 +7162,7 @@ def parse_attachment(raw: dict) -> dict | None:
 
     client_id = str(raw.get("id") or raw.get("clientAttachmentId") or uuid.uuid4()).strip()
     client_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", client_id)[:80] or str(uuid.uuid4())
+    fuel_price_per_liter = number_like(raw.get("fuelPricePerLiter")) if expense_kind == "fuel" else 0
     return {
         "client_id": client_id,
         "document_kind": document_kind,
@@ -7105,6 +7175,7 @@ def parse_attachment(raw: dict) -> dict | None:
         "amount_czk": attachment_amount_czk({**raw, "currencyCode": currency_code, "exchangeRate": exchange_rate}),
         "helios_expense_code_id": integer_like(raw.get("heliosExpenseCodeId") or raw.get("helios_expense_code_id")),
         "helios_expense_code_label": str(raw.get("heliosExpenseCodeLabel") or raw.get("helios_expense_code_label") or "").strip()[:100],
+        "fuel_price_per_liter": fuel_price_per_liter,
         "file_name": file_name,
         "content_type": content_type,
         "bytes": content,

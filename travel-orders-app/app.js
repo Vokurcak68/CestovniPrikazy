@@ -201,7 +201,7 @@ async function startApp() {
     state.selectedId = null;
     if (removedOthers || ownershipChanged) saveState();
   } else if (!accessibleOrders.some((order) => order.id === state.selectedId)) {
-    state.selectedId = accessibleOrders[0].id;
+    state.selectedId = accessibleOrders[accessibleOrders.length - 1].id;  // Select last (newest) order
     saveState();
   } else {
     const defaultsChanged = applyDefaultsToExistingDraft();
@@ -2330,12 +2330,20 @@ function mergeAttachments(localAttachments, serverAttachments) {
   // Create a map of local attachments by ID for quick lookup
   const localById = new Map(localAttachments.map(att => [att.id, att]));
 
-  // Merge: preserve local dataUrl if server doesn't have it
+  // Merge: preserve local dataUrl and fuelPricePerLiter if server doesn't have them
   return serverAttachments.map(serverAtt => {
     const localAtt = localById.get(serverAtt.id);
-    if (localAtt && localAtt.dataUrl && !serverAtt.dataUrl) {
-      // Keep the file content from local version
-      return { ...serverAtt, dataUrl: localAtt.dataUrl };
+    if (localAtt) {
+      const merged = { ...serverAtt };
+      // Preserve dataUrl if missing on server
+      if (localAtt.dataUrl && !serverAtt.dataUrl) {
+        merged.dataUrl = localAtt.dataUrl;
+      }
+      // Preserve fuelPricePerLiter if missing on server
+      if (localAtt.fuelPricePerLiter && !serverAtt.fuelPricePerLiter) {
+        merged.fuelPricePerLiter = localAtt.fuelPricePerLiter;
+      }
+      return merged;
     }
     return serverAtt;
   });
@@ -2349,6 +2357,11 @@ async function refreshOwnedOrderStatuses() {
     const draftsResponse = await apiFetch("/api/travel-orders/my/drafts");
     const draftsPayload = draftsResponse.ok ? await draftsResponse.json().catch(() => ({})) : {};
     const drafts = Array.isArray(draftsPayload.drafts) ? draftsPayload.drafts : [];
+
+    // DEBUG: Vypsat attachmenty z prvního draftu
+    if (drafts.length > 0 && drafts[0].order && drafts[0].order.attachments) {
+      console.log("🔍 DEBUG - Attachments ze serveru:", JSON.stringify(drafts[0].order.attachments, null, 2));
+    }
 
     // Load statuses for submitted/approved orders
     const statusResponse = await apiFetch("/api/travel-orders/my/statuses");
@@ -2435,7 +2448,7 @@ async function refreshOwnedOrderStatuses() {
       state.selectedId = null;
       changed = true;
     } else if (!state.orders.some((order) => order.id === state.selectedId)) {
-      state.selectedId = state.orders[0].id;
+      state.selectedId = state.orders[state.orders.length - 1].id;  // Select last (newest) order
       changed = true;
     }
 
@@ -3691,6 +3704,10 @@ function documentsSection(order) {
             <span>Datum dokladu</span>
             <input data-attachment-meta="documentDate" type="date" value="${todayString()}" />
           </label>
+          <label data-fuel-price-field style="display: none;">
+            <span>Cena za litr (Kč)</span>
+            <input data-attachment-meta="fuelPricePerLiter" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="Např. 37.50" />
+          </label>
           <label>
             <span>Částka na dokladu</span>
             <input data-attachment-meta="amount" type="number" min="0" step="0.01" inputmode="decimal" value="0" />
@@ -3710,7 +3727,6 @@ function documentsSection(order) {
           <label class="wide file-picker">
             <span>Přiložit soubor</span>
             <input data-attachment-file type="file" accept="image/*,.pdf,.txt,.csv,.doc,.docx,.xls,.xlsx" />
-            <span class="file-name" data-file-name>Nevybrán žádný soubor</span>
           </label>
           <div class="wide" style="display: flex; gap: 0.5rem; justify-content: flex-end;">
             <button type="button" class="secondary-btn" data-action="cancel-attachment">Zrušit</button>
@@ -3738,6 +3754,9 @@ function attachmentCard(attachment) {
   const download = attachment.dataUrl
     ? `<a class="secondary-btn" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.fileName || "doklad")}">Otevřít</a>`
     : "";
+  const fuelPriceInfo = attachment.expenseKind === "fuel" && attachment.fuelPricePerLiter > 0
+    ? ` · <strong>Cena: ${formatCurrency(attachment.fuelPricePerLiter)}/l</strong>`
+    : "";
   return `
     <article class="attachment-card" data-attachment-id="${escapeHtml(attachment.id)}">
       <div>
@@ -3747,7 +3766,7 @@ function attachmentCard(attachment) {
           ${escapeHtml(attachment.documentDate || "bez data")}
           · ${escapeHtml(formatAttachmentAmount(attachment))}
           · přepočet ${escapeHtml(formatCurrency(attachmentAmountCzk(attachment)))}
-          · ${escapeHtml(formatBytes(attachment.byteSize || 0))}
+          · ${escapeHtml(formatBytes(attachment.byteSize || 0))}${fuelPriceInfo}
         </small>
         ${attachment.description ? `<p>${escapeHtml(attachment.description)}</p>` : ""}
       </div>
@@ -3992,14 +4011,17 @@ async function handleFormInput(event) {
 
   const attachmentInput = event.target.closest("[data-attachment-file]");
   if (attachmentInput) {
-    if (event.type !== "change") return;
-    // Just show the file name, don't save yet
-    const form = attachmentInput.closest("[data-attachment-form]");
-    const fileNameDisplay = form?.querySelector("[data-file-name]");
-    if (fileNameDisplay && attachmentInput.files?.length) {
-      fileNameDisplay.textContent = attachmentInput.files[0].name;
-    } else if (fileNameDisplay) {
-      fileNameDisplay.textContent = "Nevybrán žádný soubor";
+    // Just let the file input work normally, don't do anything special
+    return;
+  }
+
+  const expenseKindSelect = event.target.closest("[data-attachment-meta='expenseKind']");
+  if (expenseKindSelect) {
+    // Show/hide fuel price field based on expense type
+    const form = expenseKindSelect.closest("[data-attachment-form]");
+    const fuelPriceField = form?.querySelector("[data-fuel-price-field]");
+    if (fuelPriceField) {
+      fuelPriceField.style.display = expenseKindSelect.value === "fuel" ? "block" : "none";
     }
     return;
   }
@@ -4322,8 +4344,6 @@ async function handleFormClick(event) {
       form.querySelectorAll("input, select").forEach((field) => {
         if (field.type === "file") {
           field.value = "";
-          const fileName = form.querySelector("[data-file-name]");
-          if (fileName) fileName.textContent = "Nevybrán žádný soubor";
         } else if (field.dataset.attachmentMeta === "documentDate") {
           field.value = todayString();
         } else if (field.dataset.attachmentMeta === "amount") {
@@ -4340,8 +4360,13 @@ async function handleFormClick(event) {
           field.value = order.trip.currencyCode || "CZK";
         } else if (field.dataset.attachmentMeta === "heliosExpenseCodeId") {
           field.value = "";
+        } else if (field.dataset.attachmentMeta === "fuelPricePerLiter") {
+          field.value = "0";
         }
       });
+      // Show fuel price field since default is "fuel"
+      const fuelPriceField = form.querySelector("[data-fuel-price-field]");
+      if (fuelPriceField) fuelPriceField.style.display = "block";
     }
     return;
   } else if (action === "cancel-attachment") {
@@ -4364,6 +4389,7 @@ async function handleFormClick(event) {
     attachmentFormVisible = false;
     // Hide form and update UI
     if (form) form.style.display = "none";
+    refreshDerivedUi(order);  // Recalculate with new fuel price
     renderForm();
     renderList();
     return;
@@ -5191,7 +5217,7 @@ async function deleteOrder(order) {
   // Remove from local state
   state.orders = state.orders.filter((item) => item.id !== order.id);
   const remainingOwnOrders = visibleOrders();
-  state.selectedId = remainingOwnOrders[0]?.id || null;
+  state.selectedId = remainingOwnOrders.length > 0 ? remainingOwnOrders[remainingOwnOrders.length - 1].id : null;  // Select last (newest) order
 
   // Don't auto-create a blank order - user should use "Nový příkaz" button
   saveState();
@@ -5236,8 +5262,11 @@ function attachmentMetaFromSection(section) {
   const amount = number(value("amount"));
   const heliosExpenseCodeId = value("heliosExpenseCodeId");
   const heliosExpenseCode = foreignTravelState.expenseCodes.find((code) => String(code.id) === String(heliosExpenseCodeId));
+  const expenseKind = value("expenseKind") || "other";
+  const fuelPricePerLiter = expenseKind === "fuel" ? positiveNumber(value("fuelPricePerLiter"), 0) : 0;
+
   return {
-    expenseKind: value("expenseKind") || "other",
+    expenseKind,
     heliosExpenseCodeId: heliosExpenseCodeId ? Number(heliosExpenseCodeId) : "",
     heliosExpenseCodeLabel: heliosExpenseCode?.label || "",
     documentKind: value("documentKind") || "receipt",
@@ -5247,6 +5276,7 @@ function attachmentMetaFromSection(section) {
     exchangeRate,
     amountCzk: Math.round(amount * exchangeRate * 100) / 100,
     description: value("description"),
+    fuelPricePerLiter,
   };
 }
 
@@ -5445,12 +5475,42 @@ function getBasicKmRate(order) {
   return number(order.vehicle.basicKmRate || state.rates.basicKmRate);
 }
 
+function getFuelPriceFromReceipt(order) {
+  // Find first fuel receipt that matches departure date of any route line
+  const attachments = Array.isArray(order.attachments) ? order.attachments : [];
+  const fuelReceipts = attachments.filter(att => att.expenseKind === "fuel" && att.fuelPricePerLiter > 0);
+
+  if (!fuelReceipts.length) return null;
+
+  // Get all departure dates from route lines (just the date part)
+  const departureDates = order.routeLines
+    .map(line => line.startAt ? line.startAt.split('T')[0] : null)
+    .filter(Boolean);
+
+  // Find first fuel receipt that matches any departure date
+  for (const receipt of fuelReceipts) {
+    const receiptDate = receipt.documentDate ? receipt.documentDate.split('T')[0] : null;
+    if (receiptDate && departureDates.includes(receiptDate)) {
+      return receipt.fuelPricePerLiter;
+    }
+  }
+
+  return null;
+}
+
 function getFuelKmRate(order) {
   const consumption = number(order.vehicle.consumption);
-  const fuelPrice = number(order.vehicle.fuelPrice || state.rates.fuelPrices[order.vehicle.fuelType]);
+
+  // Try to use fuel price from receipt first
+  const receiptFuelPrice = getFuelPriceFromReceipt(order);
+  const fuelPrice = receiptFuelPrice !== null
+    ? receiptFuelPrice
+    : number(order.vehicle.fuelPrice || state.rates.fuelPrices[order.vehicle.fuelType]);
+
   const secondaryFuelType = order.vehicle.secondaryFuelType;
   const secondaryConsumption = secondaryFuelType ? number(order.vehicle.secondaryConsumption) : 0;
   const secondaryFuelPrice = secondaryFuelType ? number(order.vehicle.secondaryFuelPrice || state.rates.fuelPrices[secondaryFuelType]) : 0;
+
   return (consumption / 100) * fuelPrice + (secondaryConsumption / 100) * secondaryFuelPrice;
 }
 
