@@ -2960,7 +2960,7 @@ def helios_import_candidates():
                 'celkemNahrady',
                   COALESCE(NULLIF(total.calculation_snapshot #>> '{calculation,totalBasicKmComp}', '')::numeric, total.transport_amount, 0),
                 'celkemPrepocet', COALESCE(total.gross_amount, 0),
-                'menaPrepocet', o.currency_code,
+                'menaPrepocet', COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,currencyCode}', ''), NULLIF(o.currency_code, ''), 'CZK'),
                 'kurzPrepocet', COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,exchangeRate}', '')::numeric, 1),
                 'hodinCelkem', COALESCE(total.total_hours, 0),
                 'zaloha', COALESCE(total.advance_amount, o.advance_amount, 0),
@@ -3100,10 +3100,21 @@ def helios_import_candidates():
                   'calculatedHours', line.calculated_hours,
                   'mealAmount', line.calculated_meal_amount,
                   'mealAmountForeign', CASE
-                    WHEN line.segment_type = 'foreign' THEN COALESCE((line.calculation_detail->>'mealForeignAmount')::numeric, line.foreign_meal_rate, line.calculated_meal_amount)
+                    WHEN line.segment_type = 'foreign' THEN COALESCE(
+                      NULLIF((line.calculation_detail->>'mealForeignAmount')::numeric, 0),
+                      CASE
+                        WHEN COALESCE(line.calculated_meal_amount, 0) > 0 AND COALESCE(line.foreign_exchange_rate, 0) > 0
+                        THEN round(line.calculated_meal_amount / line.foreign_exchange_rate, 2)
+                        ELSE NULLIF(line.calculated_meal_amount, 0)
+                      END
+                    )
                     ELSE line.calculated_meal_amount
                   END,
-                  'mealCurrency', COALESCE(line.calculation_detail->>'mealCurrency', line.foreign_meal_currency, o.currency_code),
+                  'mealCurrency', CASE
+                    WHEN line.segment_type = 'foreign'
+                    THEN COALESCE(NULLIF(line.foreign_meal_currency, ''), NULLIF(line.calculation_detail->>'mealCurrency', 'CZK'), NULLIF(o.currency_code, ''), 'EUR')
+                    ELSE 'CZK'
+                  END,
                   'mealExchangeRate', COALESCE((line.calculation_detail->>'mealExchangeRate')::numeric, line.foreign_exchange_rate, 1),
                   'privateVehicleAmount', line.calculated_private_vehicle_amount,
                   'totalAmount', line.calculated_total_amount,
@@ -3119,11 +3130,22 @@ def helios_import_candidates():
                       'DatCasKonec', line.end_at,
                       'odkud', line.from_place,
                       'kam', line.to_place,
-                      'Mena', COALESCE(line.calculation_detail->>'mealCurrency', line.foreign_meal_currency, o.currency_code),
+                      'Mena', CASE
+                        WHEN line.segment_type = 'foreign'
+                        THEN COALESCE(NULLIF(line.foreign_meal_currency, ''), NULLIF(line.calculation_detail->>'mealCurrency', 'CZK'), NULLIF(o.currency_code, ''), 'EUR')
+                        ELSE 'CZK'
+                      END,
                       'Kurz', COALESCE((line.calculation_detail->>'mealExchangeRate')::numeric, line.foreign_exchange_rate, 1),
                       'KodZeme', line.foreign_country_code,
                       'Stravne', CASE
-                        WHEN line.segment_type = 'foreign' THEN COALESCE((line.calculation_detail->>'mealForeignAmount')::numeric, line.foreign_meal_rate, line.calculated_meal_amount)
+                        WHEN line.segment_type = 'foreign' THEN COALESCE(
+                          NULLIF((line.calculation_detail->>'mealForeignAmount')::numeric, 0),
+                          CASE
+                            WHEN COALESCE(line.calculated_meal_amount, 0) > 0 AND COALESCE(line.foreign_exchange_rate, 0) > 0
+                            THEN round(line.calculated_meal_amount / line.foreign_exchange_rate, 2)
+                            ELSE NULLIF(line.calculated_meal_amount, 0)
+                          END
+                        )
                         ELSE line.calculated_meal_amount
                       END,
                       'CelkemStravne', line.calculated_meal_amount,
