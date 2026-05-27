@@ -3159,15 +3159,15 @@ def helios_import_candidates():
                   'description', attachment.description,
                   'documentDate', attachment.document_date,
                   'amount', attachment.amount,
-                  'currencyCode', COALESCE(attachment.currency_code, o.currency_code, 'CZK'),
+                  'currencyCode', COALESCE(attachment.currency_code, 'CZK'),
                   'exchangeRate', CASE
-                    WHEN COALESCE(attachment.currency_code, o.currency_code, 'CZK') = 'CZK' THEN 1
+                    WHEN COALESCE(attachment.currency_code, 'CZK') = 'CZK' THEN 1
                     ELSE COALESCE(attachment.exchange_rate, 1)
                   END,
                   'amountCzk', COALESCE(
                     attachment.amount_czk,
                     attachment.amount * CASE
-                      WHEN COALESCE(attachment.currency_code, o.currency_code, 'CZK') = 'CZK' THEN 1
+                      WHEN COALESCE(attachment.currency_code, 'CZK') = 'CZK' THEN 1
                       ELSE COALESCE(attachment.exchange_rate, 1)
                     END
                   ),
@@ -3276,15 +3276,30 @@ def helios_import_candidates():
                 'PHMZahrpo', 0,
                 'PHMKc', COALESCE(total.calculation_snapshot #>> '{calculation,totalFuel}', '0')::numeric,
                 'CelkemDiety', COALESCE(total.meal_amount, 0),
-                'CelkemDietyZak', COALESCE(total.meal_amount, 0),
+                'CelkemDietyZak', CASE
+                  WHEN COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,currencyCode}', ''), NULLIF(o.currency_code, ''), 'CZK') <> 'CZK'
+                  THEN round(COALESCE(total.meal_amount, 0)
+                    / NULLIF(COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,exchangeRate}', '')::numeric, 1), 0), 2)
+                  ELSE COALESCE(total.meal_amount, 0)
+                END,
                 'CelkemNaklady', COALESCE(total.lodging_amount, 0) + COALESCE(total.other_amount, 0),
                 'CelkemNahrady',
                   COALESCE(NULLIF(total.calculation_snapshot #>> '{calculation,totalBasicKmComp}', '')::numeric, total.transport_amount, 0),
                 'CelkemPHM', COALESCE(total.calculation_snapshot #>> '{calculation,totalFuel}', '0')::numeric,
                 'CelkemKc', round(COALESCE(total.gross_amount, 0), 0),
-                'CelkemKCZak', round(COALESCE(total.gross_amount, 0), 0),
+                'CelkemKCZak', CASE
+                  WHEN COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,currencyCode}', ''), NULLIF(o.currency_code, ''), 'CZK') <> 'CZK'
+                  THEN round(COALESCE(total.gross_amount, 0)
+                    / NULLIF(COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,exchangeRate}', '')::numeric, 1), 0), 0)
+                  ELSE round(COALESCE(total.gross_amount, 0), 0)
+                END,
                 'CelkemKcPredZao', COALESCE(total.gross_amount, 0),
-                'CelkemKcZakPredZao', COALESCE(total.gross_amount, 0),
+                'CelkemKcZakPredZao', CASE
+                  WHEN COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,currencyCode}', ''), NULLIF(o.currency_code, ''), 'CZK') <> 'CZK'
+                  THEN round(COALESCE(total.gross_amount, 0)
+                    / NULLIF(COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,exchangeRate}', '')::numeric, 1), 0), 2)
+                  ELSE COALESCE(total.gross_amount, 0)
+                END,
                 'KMCelkem', COALESCE(total.total_km, 0),
                 'KMZahr', COALESCE((
                   SELECT sum(foreign_km.km)
@@ -3293,14 +3308,19 @@ def helios_import_candidates():
                     AND foreign_km.segment_type = 'foreign'
                 ), 0),
                 'VratkaTuz', true,
-                'MenaPrepocet', o.currency_code,
+                'MenaPrepocet', COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,currencyCode}', ''), NULLIF(o.currency_code, ''), 'CZK'),
                 'KurzPrepocet', COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,exchangeRate}', '')::numeric, 1),
                 'FixKurz', false,
                 'idrada', 15,
                 'JeNovaVetaEditor', false,
                 'CestakJakHledatKurz', 1,
                 'ZpusobKurzu', 0,
-                'CelkemPrepocet', COALESCE(total.gross_amount, 0)
+                'CelkemPrepocet', CASE
+                  WHEN COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,currencyCode}', ''), NULLIF(o.currency_code, ''), 'CZK') <> 'CZK'
+                  THEN round(COALESCE(total.gross_amount, 0)
+                    / NULLIF(COALESCE(NULLIF(total.calculation_snapshot #>> '{order,trip,exchangeRate}', '')::numeric, 1), 0), 2)
+                  ELSE COALESCE(total.gross_amount, 0)
+                END
               )
             ),
             'importable',

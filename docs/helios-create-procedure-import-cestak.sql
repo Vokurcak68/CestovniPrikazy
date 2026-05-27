@@ -59,6 +59,10 @@ DECLARE @ExpensesAmount decimal(19, 6) = 0;
 DECLARE @KmCompensationAmount decimal(19, 6) = 0;
 DECLARE @TotalAmountPredZao decimal(19, 6) = 0;
 DECLARE @TotalAmountRounded decimal(19, 6) = 0;
+DECLARE @MenaPrepocet nvarchar(3) = N'CZK';
+DECLARE @KurzPrepocet decimal(19, 6) = 1;
+DECLARE @TotalAmountZak decimal(19, 6) = 0;
+DECLARE @MealAmountZak decimal(19, 6) = 0;
 DECLARE @CallbackBody nvarchar(max) = NULL;
 DECLARE @CallbackResponse nvarchar(max) = NULL;
 DECLARE @CallbackHttp int = NULL;
@@ -153,6 +157,20 @@ SET @TotalAmountPredZao = COALESCE(
   0
 );
 SET @TotalAmountRounded = ROUND(@TotalAmountPredZao, 0);
+
+-- Výpočet "zákaznické" měny (MenaPrepocet) a přepočtených částek pro zahraniční cestovní příkazy
+SET @MenaPrepocet = COALESCE(NULLIF(JSON_VALUE(@Payload, '$.helios.headerValues.MenaPrepocet'), N''), N'CZK');
+SET @KurzPrepocet = COALESCE(NULLIF(TRY_CONVERT(decimal(19, 6), JSON_VALUE(@Payload, '$.helios.headerValues.KurzPrepocet')), 0), 1);
+SET @TotalAmountZak = CASE
+  WHEN @MenaPrepocet <> N'CZK'
+  THEN ROUND(@TotalAmountPredZao / @KurzPrepocet, 2)
+  ELSE @TotalAmountRounded
+END;
+SET @MealAmountZak = CASE
+  WHEN @MenaPrepocet <> N'CZK'
+  THEN ROUND(@MealAmount / @KurzPrepocet, 2)
+  ELSE @MealAmount
+END;
 
 IF EXISTS (SELECT 1 FROM dbo.TabICestak WHERE CisDok = @HeliosCisDok)
   THROW 52002, 'Cestovni prikaz s timto CisDok uz v dbo.TabICestak existuje.', 1;
@@ -435,14 +453,14 @@ BEGIN TRY
     0,
     @FuelAmount,
     @MealAmount,
-    @MealAmount,
+    @MealAmountZak,
     @ExpensesAmount,
     @KmCompensationAmount,
     @FuelAmount,
     @TotalAmountRounded,
-    @TotalAmountRounded,
+    ROUND(@TotalAmountZak, 0),
     @TotalAmountPredZao,
-    @TotalAmountPredZao,
+    @TotalAmountZak,
     @TotalKm,
     COALESCE(TRY_CONVERT(decimal(19, 6), JSON_VALUE(@Payload, '$.helios.headerValues.KMZahr')), 0),
     COALESCE(NULLIF(JSON_VALUE(@Payload, '$.helios.headerValues.TypCesty'), N''), N'T'),
@@ -452,8 +470,8 @@ BEGIN TRY
     15,
     N'CestovniPrikazy',
     @Now,
-    COALESCE(NULLIF(JSON_VALUE(@Payload, '$.helios.headerValues.MenaPrepocet'), N''), N'CZK'),
-    COALESCE(TRY_CONVERT(decimal(19, 6), JSON_VALUE(@Payload, '$.helios.headerValues.KurzPrepocet')), 1),
+    @MenaPrepocet,
+    @KurzPrepocet,
     0,
     0,
     1,
@@ -619,7 +637,7 @@ BEGIN TRY
       CAST(TRY_CONVERT(datetimeoffset(0), line.StartAtText) AS datetime) AS Datum,
       expense.idNaklKod,
       expense.Popis,
-      COALESCE(NULLIF(line.Mena, N''), N'CZK') AS Mena,
+      N'CZK' AS Mena,   -- jízdné/nocležné/ostatní jsou vždy v CZK; měna useku (Mena) platí jen pro stravné
       CAST(1 AS decimal(19, 6)) AS Kurz,
       expense.Castka AS CenaVal,
       expense.Castka AS CenaKc
