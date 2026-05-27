@@ -2890,12 +2890,25 @@ function approvalDetailSection(detail) {
         </div>
 
         <div class="approval-total-strip">
-          ${compactStat("Celkem", "approvalGross", formatCurrency(total.grossAmount || calc.totalGross || 0))}
-          ${compactStat("Cestovné", "approvalTransport", formatCurrency(total.transportAmount || calc.totalTransport || 0))}
-          ${compactStat("Stravné", "approvalMeals", formatCurrency(total.mealAmount || calc.totalMeals || 0))}
-          ${compactStat("Nocležné", "approvalLodging", formatCurrency(total.lodgingAmount || calc.totalLodging || 0))}
-          ${compactStat("Výdaje", "approvalOther", formatCurrency(total.otherAmount || calc.totalOther || 0))}
-          ${compactStat("K výplatě", "approvalBalance", formatCurrency(total.balanceRounded || calc.balanceRounded || 0))}
+          ${(() => {
+            const snapshotTrip = detailSnapshotOrder(detail).trip || {};
+            const tripCurrency = normalizeCurrencyCode(snapshotTrip.currencyCode || "CZK");
+            const hasFc = tripCurrency !== "CZK";
+            const tripRate = hasFc ? positiveNumber(snapshotTrip.exchangeRate, 1) : 1;
+            const fc = (czk) => formatCurrency(Math.round(czk / tripRate * 100) / 100, tripCurrency);
+            const grossCzk = total.grossAmount || calc.totalGross || 0;
+            const balanceCzk = total.balanceRounded || calc.balanceRounded || 0;
+            return `
+              ${compactStat("Celkem", "approvalGross", formatCurrency(grossCzk))}
+              ${hasFc ? compactStat(tripCurrency, "approvalGrossInCurrency", fc(grossCzk)) : ""}
+              ${compactStat("Cestovné", "approvalTransport", formatCurrency(total.transportAmount || calc.totalTransport || 0))}
+              ${compactStat("Stravné", "approvalMeals", formatCurrency(total.mealAmount || calc.totalMeals || 0))}
+              ${compactStat("Nocležné", "approvalLodging", formatCurrency(total.lodgingAmount || calc.totalLodging || 0))}
+              ${compactStat("Výdaje", "approvalOther", formatCurrency(total.otherAmount || calc.totalOther || 0))}
+              ${compactStat("K výplatě", "approvalBalance", formatCurrency(balanceCzk))}
+              ${hasFc ? compactStat(`K výplatě ${tripCurrency}`, "approvalBalanceInCurrency", fc(balanceCzk)) : ""}
+            `;
+          })()}
         </div>
 
         <div class="approval-detail-grid">
@@ -6192,6 +6205,18 @@ function renderPrintSheet(order) {
         <tr><th>Stravné</th><td>${formatCurrency(calc.totalMeals)}</td><th>Nocležné</th><td>${formatCurrency(calc.totalLodging)}</td></tr>
         <tr><th>Vedlejší výdaje</th><td>${formatCurrency(calc.totalOther)}</td><th>Celkem</th><td>${formatCurrency(calc.totalGross)}</td></tr>
         <tr><th>Záloha</th><td>${formatCurrency(calc.advance)}</td><th>Doplatek / přeplatek</th><td>${formatCurrency(calc.balanceRounded)}</td></tr>
+        ${(() => {
+          const tripCurrency = normalizeCurrencyCode(order.trip?.currencyCode || "CZK");
+          if (tripCurrency === "CZK") return "";
+          const rate = positiveNumber(order.trip?.exchangeRate, 1);
+          const fc = (czk) => formatCurrency(Math.round(czk / rate * 100) / 100, tripCurrency);
+          return `<tr>
+            <th>Celkem (${escapeHtml(tripCurrency)})</th>
+            <td>${escapeHtml(fc(calc.totalGross))}</td>
+            <th>Doplatek (${escapeHtml(tripCurrency)})</th>
+            <td>${escapeHtml(fc(calc.balanceRounded))}</td>
+          </tr>`;
+        })()}
       </tbody>
     </table>
   `;
