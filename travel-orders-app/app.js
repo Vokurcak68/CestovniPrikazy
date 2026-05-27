@@ -3596,7 +3596,7 @@ function routeCard(line, lineCalc, index, totalLines) {
         ${lineField("Nocležné", "lodging", line.lodging, "number", "0.01", "Náklady na ubytování")}
         ${lineField("Vedlejší výdaje", "other", line.other, "number", "0.01", "Ostatní výdaje (parkování, telefon, atd.)")}
         ${lineField("Jídla zdarma", "freeMeals", line.freeMeals, "number", "1", "Počet jídel poskytnutých zdarma (snižuje stravné)")}
-        ${foreignLineInfo(line)}
+        ${foreignLineInfo(line, lineCalc)}
       </div>
       ${lastLineActions}
     </article>
@@ -3635,13 +3635,23 @@ function foreignCountryField(line) {
   `;
 }
 
-function foreignLineInfo(line) {
+function foreignLineInfo(line, lineCalc) {
   if ((line.segmentType || "domestic") !== "foreign") return "";
   const currency = normalizeCurrencyCode(line.foreignCurrencyCode || "EUR");
+  const bandLabel = lineCalc?.mealBandLabel || "";
+  const foreignAmount = lineCalc?.mealForeignAmount ?? 0;  // v cizí měně po krácení
+  const amountCzk = lineCalc?.meal ?? 0;                   // v CZK po krácení
+
+  // Řádek se stravným: základ → vypočtená částka v cizí měně → v Kč
+  const mealDetail = bandLabel
+    ? `${escapeHtml(formatCurrency(line.foreignMealRate || 0, currency))} → <strong>${escapeHtml(formatCurrency(foreignAmount, currency))}</strong> → ${escapeHtml(formatCurrency(amountCzk))}`
+    : escapeHtml(formatCurrency(line.foreignMealRate || 0, currency));
+
   return `
     <div class="route-foreign-info">
-      <span>Stravné ${escapeHtml(formatCurrency(line.foreignMealRate || 0, currency))}</span>
-      <span>Kurz ${escapeHtml(formatExchangeRate(line.foreignExchangeRate || 1, line.foreignExchangeRateDate))}</span>
+      <span class="foreign-band-label">${escapeHtml(bandLabel || "—")}</span>
+      <span>Stravné: ${mealDetail}</span>
+      <span>Kurz: ${escapeHtml(formatExchangeRate(line.foreignExchangeRate || 1, line.foreignExchangeRateDate))}</span>
     </div>
   `;
 }
@@ -5483,6 +5493,7 @@ function calculateLine(order, line) {
     meal: meal.amount,
     mealBase: meal.base,
     mealReduction: meal.reduction,
+    mealBandLabel: meal.bandLabel || "",
     mealCurrency: meal.currency || "CZK",
     mealExchangeRate: meal.exchangeRate || 1,
     mealForeignAmount: meal.foreignAmount || 0,
@@ -5494,18 +5505,42 @@ function calculateLine(order, line) {
 }
 
 function foreignMealAllowance(line, freeMeals) {
-  const base = number(line.foreignMealRate);
+  const mealRate = number(line.foreignMealRate); // základní sazba (plná)
   const exchangeRate = positiveNumber(line.foreignExchangeRate, 1);
+  const currency = normalizeCurrencyCode(line.foreignCurrencyCode || "EUR");
+  const hours = hoursBetween(line.startAt, line.endAt);
+
+  // Pásmo podle doby v zahraničí — § 170 zákoníku práce
+  // > 18 h → plná sazba, krácení 25 % za jídlo
+  // 12–18 h → 2/3 sazby, krácení 35 % za jídlo
+  //  1–12 h → 1/3 sazby, krácení 70 % za jídlo
+  //   < 1 h → žádné stravné
+  let bandFraction, reductionPct, bandLabel;
+  if (hours > 18) {
+    bandFraction = 1;   reductionPct = 0.25; bandLabel = "Plná sazba (> 18 h)";
+  } else if (hours >= 12) {
+    bandFraction = 2/3; reductionPct = 0.35; bandLabel = "2/3 sazby (12–18 h)";
+  } else if (hours >= 1) {
+    bandFraction = 1/3; reductionPct = 0.70; bandLabel = "1/3 sazby (1–12 h)";
+  } else {
+    return { base: 0, reduction: 0, amount: 0, currency, exchangeRate, foreignAmount: 0, bandLabel: "Bez nároku (< 1 h)", hours };
+  }
+
+  const base = Math.round(mealRate * bandFraction * 100) / 100;
   const meals = Math.max(0, Math.min(3, Math.round(freeMeals || 0)));
-  const reduction = Math.min(base, base * 0.25 * meals);
-  const foreignAmount = Math.max(0, base - reduction);
+  const reduction = Math.min(base, Math.round(base * reductionPct * meals * 100) / 100);
+  const foreignAmount = Math.max(0, Math.round((base - reduction) * 100) / 100);
+
   return {
     base,
     reduction,
-    amount: Math.round(foreignAmount * exchangeRate * 100) / 100,
-    currency: normalizeCurrencyCode(line.foreignCurrencyCode || "EUR"),
-    exchangeRate,
     foreignAmount,
+    bandFraction,
+    bandLabel,
+    hours,
+    amount: Math.round(foreignAmount * exchangeRate * 100) / 100,
+    currency,
+    exchangeRate,
   };
 }
 
