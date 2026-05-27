@@ -5123,16 +5123,40 @@ function initDateTimePickers() {
 
   // Initialize flatpickr on all datetime-local inputs
   document.querySelectorAll('input[type="datetime-local"]').forEach(input => {
+    // Normalizace existující hodnoty do "YYYY-MM-DDTHH:mm" aby ji Flatpickr správně naparsoval přes defaultDate
+    let defaultDate = null;
+    if (input.value) {
+      const d = new Date(input.value);
+      if (!isNaN(d.getTime())) {
+        defaultDate = d;
+      }
+    }
+
     flatpickr(input, {
       enableTime: true,
       time_24hr: true,
-      dateFormat: "Y-m-d H:i",
+      dateFormat: "Y-m-d H:i",   // Interní formát Flatpickru (space separator)
       altInput: true,
-      altFormat: "j. n. Y H:i",
+      altFormat: "j. n. Y H:i",  // Zobrazovaný formát pro uživatele
       locale: "cs",
+      minuteIncrement: 1,
+      closeOnSelect: false,       // Kalendář zůstane otevřený — uživatel může upravit čas a pak kliknout OK
+      defaultDate: defaultDate,   // Předvyplnění existující hodnoty přes Date objekt (bypasuje parsování dateFormat)
+      onReady: function(selectedDates, dateStr, instance) {
+        // Přidat tlačítko OK pro potvrzení výběru
+        const okBtn = document.createElement("button");
+        okBtn.textContent = "OK";
+        okBtn.type = "button";
+        okBtn.className = "flatpickr-ok-btn";
+        okBtn.addEventListener("click", function() {
+          instance.close();
+        });
+        instance.calendarContainer.appendChild(okBtn);
+      },
       onChange: function(selectedDates, dateStr, instance) {
-        // Trigger input event so the form updates
-        input.value = dateStr;
+        // Převod z "YYYY-MM-DD HH:mm" (Flatpickr formát) zpět na ISO "YYYY-MM-DDTHH:mm"
+        const isoStr = selectedDates.length > 0 ? dateStr.replace(" ", "T") : "";
+        input.value = isoStr;
         input.dispatchEvent(new Event('input', { bubbles: true }));
       }
     });

@@ -2308,3 +2308,31 @@ textarea:focus {
   margin: 4px 0 0 0;
   padding-left: 0;
 }
+
+/* ── Flatpickr customization ──────────────────────────────── */
+
+/* Vypnout fade-in animaci — příčina nefunkčního prvního kliknutí na datum */
+.flatpickr-calendar {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* OK tlačítko pro potvrzení výběru data a času */
+.flatpickr-ok-btn {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 8px 10px 10px;
+  padding: 7px 11px;
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent));
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.flatpickr-ok-btn:hover {
+  background: linear-gradient(135deg, #2569e6, #00a6c9);
+}
