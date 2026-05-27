@@ -3269,25 +3269,7 @@ def helios_import_candidates():
                   END,
                 'SPZ', COALESCE(total.calculation_snapshot #>> '{order,vehicle,plate}', ''),
                 'Spotreba', NULLIF(total.calculation_snapshot #>> '{order,vehicle,consumption}', '')::numeric,
-                'CenaL', COALESCE(
-                  (
-                    SELECT attachment.fuel_price_per_liter
-                    FROM travel.travel_attachment attachment
-                    WHERE attachment.travel_order_id = o.id
-                      AND attachment.expense_kind = 'fuel'
-                      AND attachment.fuel_price_per_liter > 0
-                      AND attachment.document_date IS NOT NULL
-                      AND EXISTS (
-                        SELECT 1
-                        FROM travel.travel_route_line line
-                        WHERE line.travel_order_id = o.id
-                          AND date(line.start_at) = attachment.document_date
-                      )
-                    ORDER BY attachment.uploaded_at
-                    LIMIT 1
-                  ),
-                  NULLIF(total.calculation_snapshot #>> '{order,vehicle,fuelPrice}', '')::numeric
-                ),
+                'CenaL', NULLIF(total.calculation_snapshot #>> '{order,vehicle,fuelPrice}', '')::numeric,
                 'SazbaKM', NULLIF(total.calculation_snapshot #>> '{order,vehicle,basicKmRate}', '')::numeric,
                 'SDPlati', 'O',
                 'ProcKapes', 0,
@@ -6936,14 +6918,45 @@ def build_calculation_snapshot(order: dict, calc: dict) -> dict:
             }
         )
 
+    # Find fuel price from receipt if available
+    vehicle = dict(order.get("vehicle") or {})
+    fuel_price_from_receipt = None
+
+    # Get all departure dates from route lines
+    route_lines = order.get("routeLines") or []
+    departure_dates = set()
+    for line in route_lines:
+        start_at = line.get("startAt") or ""
+        if start_at and "T" in start_at:
+            departure_dates.add(start_at.split("T")[0])
+
+    # Find first fuel receipt matching departure date
+    for att in attachments:
+        if att.get("expenseKind") == "fuel" and att.get("fuelPricePerLiter"):
+            fuel_price = float(att.get("fuelPricePerLiter") or 0)
+            if fuel_price > 0:
+                doc_date = att.get("documentDate") or ""
+                if doc_date and "T" in doc_date:
+                    doc_date = doc_date.split("T")[0]
+                elif doc_date:
+                    doc_date = str(doc_date)
+
+                if doc_date in departure_dates:
+                    fuel_price_from_receipt = fuel_price
+                    break
+
+    # Override vehicle fuelPrice with receipt price if found
+    if fuel_price_from_receipt is not None:
+        vehicle["fuelPrice"] = str(fuel_price_from_receipt)
+
     return {
         "calculation": calc or {},
         "order": {
             "employee": order.get("employee") or {},
             "trip": order.get("trip") or {},
             "approval": order.get("approval") or {},
-            "vehicle": order.get("vehicle") or {},
-            "routeLines": order.get("routeLines") or [],
+            "vehicle": vehicle,
+            "routeLines": route_lines,
             "attachments": attachments,
         },
     }
