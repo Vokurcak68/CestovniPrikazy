@@ -3238,6 +3238,10 @@ function focusRouteLine(lineId) {
 function overviewSection(order, calc) {
   const purpose = order.trip.purpose || "Bez účelu";
   const place = order.trip.destination || "Bez místa jednání";
+  const tripCurrency = normalizeCurrencyCode(order.trip.currencyCode || "CZK");
+  const hasFc = tripCurrency !== "CZK";
+  const tripRate = hasFc ? positiveNumber(order.trip.exchangeRate, 1) : 1;
+  const fc = (czk) => formatCurrency(Math.round(czk / tripRate * 100) / 100, tripCurrency);
   return `
     <section class="order-overview" aria-label="Souhrn cestovního příkazu">
       <div class="overview-main">
@@ -3247,6 +3251,7 @@ function overviewSection(order, calc) {
       </div>
       <div class="overview-stats">
         ${compactStat("Náhrady", "totalGross", formatCurrency(calc.totalGross))}
+        ${hasFc ? compactStat(tripCurrency, "totalGrossInCurrency", fc(calc.totalGross)) : ""}
         ${compactStat("Doplatek", "balanceRounded", formatCurrency(calc.balanceRounded))}
         ${compactStat("Km", "totalKm", formatNumber(calc.totalKm, 0))}
         ${compactStat("Hodin", "totalHours", formatNumber(calc.totalHours, 2))}
@@ -3592,6 +3597,7 @@ function routeCard(line, lineCalc, index, totalLines) {
         </label>
       </div>
       <div class="route-costs">
+        ${foreignExpenseFields(line)}
         ${lineField("Jízdné", "fare", line.fare, "number", "0.01", "Náklady na dopravu (vlak, letadlo, taxi, atd.)")}
         ${lineField("Nocležné", "lodging", line.lodging, "number", "0.01", "Náklady na ubytování")}
         ${lineField("Vedlejší výdaje", "other", line.other, "number", "0.01", "Ostatní výdaje (parkování, telefon, atd.)")}
@@ -3600,6 +3606,20 @@ function routeCard(line, lineCalc, index, totalLines) {
       </div>
       ${lastLineActions}
     </article>
+  `;
+}
+
+function foreignExpenseFields(line) {
+  if ((line.segmentType || "domestic") !== "foreign") return "";
+  const currency = normalizeCurrencyCode(line.foreignCurrencyCode || "EUR");
+  const rate = positiveNumber(line.foreignExchangeRate, 1);
+  return `
+    <div class="foreign-expense-fields">
+      <span class="foreign-expense-label">Výdaje v ${escapeHtml(currency)} · kurz ${escapeHtml(formatNumber(rate, 4))}</span>
+      ${lineField(`Jízdné (${currency})`, "fareForeign", line.fareForeign || 0, "number", "0.01")}
+      ${lineField(`Nocležné (${currency})`, "lodgingForeign", line.lodgingForeign || 0, "number", "0.01")}
+      ${lineField(`Ostatní (${currency})`, "otherForeign", line.otherForeign || 0, "number", "0.01")}
+    </div>
   `;
 }
 
@@ -3801,6 +3821,15 @@ function attachmentCard(attachment) {
 }
 
 function summarySection(order, calc) {
+  const tripCurrency = normalizeCurrencyCode(order.trip.currencyCode || "CZK");
+  const hasFc = tripCurrency !== "CZK";
+  const tripRate = hasFc ? positiveNumber(order.trip.exchangeRate, 1) : 1;
+  const fc = (czk) => formatCurrency(Math.round(czk / tripRate * 100) / 100, tripCurrency);
+  const fcTd = (czk, key) => hasFc
+    ? `<td class="summary-fc" data-summary-fc="${escapeHtml(key)}">${escapeHtml(fc(czk))}</td>`
+    : "";
+  const fcHead = hasFc ? `<th class="summary-fc">${escapeHtml(tripCurrency)}</th>` : "";
+
   return `
     <section class="section">
       <div class="section-header">
@@ -3811,18 +3840,21 @@ function summarySection(order, calc) {
           ${kpi("Ujeto km", "totalKm", formatNumber(calc.totalKm, 0))}
           ${kpi("Doba cest", "totalHours", `${formatNumber(calc.totalHours, 2)} h`)}
           ${kpi("Hrubé náhrady", "totalGross", formatCurrency(calc.totalGross))}
+          ${hasFc ? kpi(`Náhrady ${tripCurrency}`, "totalGrossInCurrency", fc(calc.totalGross)) : ""}
           ${kpi("Doplatek / přeplatek", "balanceRounded", formatCurrency(calc.balanceRounded))}
+          ${hasFc ? kpi(`Doplatek ${tripCurrency}`, "balanceInCurrency", fc(calc.balanceRounded)) : ""}
         </div>
         <table class="calc-table">
+          <thead><tr><th></th><th>Kč</th>${fcHead}</tr></thead>
           <tbody>
-            <tr><th>Cestovné a PHM</th><td data-summary="totalTransport">${formatCurrency(calc.totalTransport)}</td></tr>
-            <tr><th>Stravné</th><td data-summary="totalMeals">${formatCurrency(calc.totalMeals)}</td></tr>
-            <tr><th>Nocležné</th><td data-summary="totalLodging">${formatCurrency(calc.totalLodging)}</td></tr>
-            <tr><th>Vedlejší výdaje v řádcích</th><td data-summary="totalLineOther">${formatCurrency(calc.totalLineOther)}</td></tr>
-            <tr><th>Přiložené doklady</th><td data-summary="totalAttachmentExpenses">${formatCurrency(calc.totalAttachmentExpenses)}</td></tr>
-            <tr><th>Celkem</th><td data-summary="totalGross">${formatCurrency(calc.totalGross)}</td></tr>
-            <tr><th>Záloha</th><td data-summary="advance">${formatCurrency(calc.advance)}</td></tr>
-            <tr><th>K výplatě / vrácení</th><td><strong data-summary="balanceRounded">${formatCurrency(calc.balanceRounded)}</strong></td></tr>
+            <tr><th>Cestovné a PHM</th><td data-summary="totalTransport">${formatCurrency(calc.totalTransport)}</td>${fcTd(calc.totalTransport, "totalTransport")}</tr>
+            <tr><th>Stravné</th><td data-summary="totalMeals">${formatCurrency(calc.totalMeals)}</td>${fcTd(calc.totalMeals, "totalMeals")}</tr>
+            <tr><th>Nocležné</th><td data-summary="totalLodging">${formatCurrency(calc.totalLodging)}</td>${fcTd(calc.totalLodging, "totalLodging")}</tr>
+            <tr><th>Vedlejší výdaje v řádcích</th><td data-summary="totalLineOther">${formatCurrency(calc.totalLineOther)}</td>${fcTd(calc.totalLineOther, "totalLineOther")}</tr>
+            <tr><th>Přiložené doklady</th><td data-summary="totalAttachmentExpenses">${formatCurrency(calc.totalAttachmentExpenses)}</td>${fcTd(calc.totalAttachmentExpenses, "totalAttachmentExpenses")}</tr>
+            <tr><th>Celkem</th><td data-summary="totalGross">${formatCurrency(calc.totalGross)}</td>${fcTd(calc.totalGross, "totalGross")}</tr>
+            <tr><th>Záloha</th><td data-summary="advance">${formatCurrency(calc.advance)}</td>${fcTd(calc.advance, "advance")}</tr>
+            <tr><th>K výplatě / vrácení</th><td><strong data-summary="balanceRounded">${formatCurrency(calc.balanceRounded)}</strong></td>${fcTd(calc.balanceRounded, "balanceRounded")}</tr>
           </tbody>
         </table>
       </div>
@@ -4055,6 +4087,17 @@ async function handleFormInput(event) {
     const line = order.routeLines.find((item) => item.id === row.dataset.lineId);
     if (!line) return;
     line[lineField.dataset.lineField] = parseInputValue(lineField);
+    // Pokud uživatel zadal výdaj v cizí měně → automaticky přepočítat Kč pole
+    const foreignToLocal = { fareForeign: "fare", lodgingForeign: "lodging", otherForeign: "other" };
+    const czkKey = foreignToLocal[lineField.dataset.lineField];
+    if (czkKey && (line.segmentType || "domestic") === "foreign") {
+      const foreignVal = number(lineField.value);
+      const rate = positiveNumber(line.foreignExchangeRate, 1);
+      line[czkKey] = Math.round(foreignVal * rate * 100) / 100;
+      // Aktualizovat odpovídající Kč pole na stránce bez re-renderu
+      const czkInput = row.querySelector(`[data-line-field="${czkKey}"]`);
+      if (czkInput) czkInput.value = line[czkKey];
+    }
     if (lineField.dataset.lineField === "segmentType") {
       if (line.segmentType === "foreign") {
         await refreshForeignTravelReferenceForOrder(order);
@@ -5398,6 +5441,35 @@ function updateSummaryValues(order, calc) {
     });
   });
 
+  // Přepočet do měny z 1. záložky (pokud není CZK)
+  const tripCurrency = normalizeCurrencyCode(order.trip.currencyCode || "CZK");
+  if (tripCurrency !== "CZK") {
+    const rate = positiveNumber(order.trip.exchangeRate, 1);
+    const fc = (czk) => formatCurrency(Math.round(czk / rate * 100) / 100, tripCurrency);
+    const fcValues = {
+      totalTransport: fc(calc.totalTransport),
+      totalMeals:     fc(calc.totalMeals),
+      totalLodging:   fc(calc.totalLodging),
+      totalLineOther: fc(calc.totalLineOther),
+      totalAttachmentExpenses: fc(calc.totalAttachmentExpenses),
+      totalGross:     fc(calc.totalGross),
+      advance:        fc(calc.advance),
+      balanceRounded: fc(calc.balanceRounded),
+    };
+    Object.entries(fcValues).forEach(([key, value]) => {
+      document.querySelectorAll(`[data-summary-fc="${key}"]`).forEach((el) => {
+        el.textContent = value;
+      });
+    });
+    // KPI widgety s vlastním data-summary klíčem
+    document.querySelectorAll('[data-summary="totalGrossInCurrency"]').forEach((el) => {
+      el.textContent = fc(calc.totalGross);
+    });
+    document.querySelectorAll('[data-summary="balanceInCurrency"]').forEach((el) => {
+      el.textContent = fc(calc.balanceRounded);
+    });
+  }
+
   document.querySelectorAll('[data-summary-value="privateKmRate"]').forEach((el) => {
     el.value = `${formatCurrency(getPrivateKmRate(order))} / km`;
   });
@@ -5727,6 +5799,9 @@ function applyMissingDefaults(order) {
     if (!line.foreignCurrencyCode) line.foreignCurrencyCode = "";
     if (line.foreignMealRate === undefined) line.foreignMealRate = 0;
     if (line.foreignExchangeRate === undefined) line.foreignExchangeRate = 1;
+    if (line.fareForeign === undefined) line.fareForeign = 0;
+    if (line.lodgingForeign === undefined) line.lodgingForeign = 0;
+    if (line.otherForeign === undefined) line.otherForeign = 0;
   });
   if (firstLine && (!firstLine.transport || firstLine.transport === "private_car") && firstLine.transport !== defaults.routeTransport) {
     firstLine.transport = defaults.routeTransport;
@@ -5806,6 +5881,9 @@ function createBlankLine(transport = null) {
     fare: 0,
     lodging: 0,
     other: 0,
+    fareForeign: 0,
+    lodgingForeign: 0,
+    otherForeign: 0,
     freeMeals: 0,
   };
 }
@@ -5834,6 +5912,10 @@ function applyForeignCountryToLine(line, countryCode) {
   line.foreignExchangeRate = positiveNumber(country.exchangeRate, 1);
   line.foreignExchangeRateDate = country.exchangeRateDate || "";
   line.foreignMealAmountCzk = Math.round(line.foreignMealRate * line.foreignExchangeRate * 100) / 100;
+  // Přepočítat Kč výdaje podle nového kurzu (pokud byly zadané v cizí měně)
+  if (number(line.fareForeign) > 0)    line.fare    = Math.round(line.fareForeign    * line.foreignExchangeRate * 100) / 100;
+  if (number(line.lodgingForeign) > 0) line.lodging = Math.round(line.lodgingForeign * line.foreignExchangeRate * 100) / 100;
+  if (number(line.otherForeign) > 0)   line.other   = Math.round(line.otherForeign   * line.foreignExchangeRate * 100) / 100;
 }
 
 function clearForeignLine(line) {
@@ -5844,6 +5926,9 @@ function clearForeignLine(line) {
   line.foreignExchangeRate = 1;
   line.foreignExchangeRateDate = "";
   line.foreignMealAmountCzk = 0;
+  line.fareForeign = 0;
+  line.lodgingForeign = 0;
+  line.otherForeign = 0;
 }
 
 function refreshForeignLinesForOrder(order) {

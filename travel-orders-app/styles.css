@@ -2320,6 +2320,39 @@ textarea:focus {
   padding-left: 0;
 }
 
+/* ── Zahraniční výdaje v cizí měně ───────────────────────── */
+
+.foreign-expense-fields {
+  display: contents; /* splyne s flex kontejnerem route-costs */
+}
+
+.foreign-expense-label {
+  width: 100%;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-dark);
+  text-transform: uppercase;
+  padding: 6px 0 2px;
+  border-top: 1px solid var(--line);
+  order: -1; /* vždy jako první v route-costs */
+}
+
+/* ── Souhrn v cizí měně ───────────────────────────────────── */
+
+.summary-fc {
+  color: var(--muted);
+  font-size: 0.88em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.calc-table th:empty {
+  /* skryje prázdnou levou hlavičku tabulky */
+  border: none;
+  padding: 0;
+}
+
 /* ── Flatpickr customization ──────────────────────────────── */
 
 /* Vypnout fade-in animaci — příčina nefunkčního prvního kliknutí na datum */
