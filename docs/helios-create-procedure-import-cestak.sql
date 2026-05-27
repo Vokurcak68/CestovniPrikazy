@@ -467,7 +467,7 @@ BEGIN TRY
     @VozidloId,
     1,
     @Stredisko,
-    15,
+    CASE WHEN @MenaPrepocet <> N'CZK' THEN 16 ELSE 15 END,  -- 16 = zahranični, 15 = tuzemský
     N'CestovniPrikazy',
     @Now,
     @MenaPrepocet,
