@@ -1,5 +1,6 @@
 const STORAGE_KEY = "travelOrders.cz.autonomous.v1";
 const LAST_USER_KEY = "travelOrders.lastUserKey";
+const LAST_LOGIN_KEY = "travelOrders.lastLogin";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Rozpracováno" },
@@ -728,7 +729,7 @@ function showLogin(error = "", message = "") {
       </div>
       <label>
         <span>Uživatel nebo e-mail</span>
-        <input name="login" type="text" autocomplete="username" value="admin@local" required />
+        <input name="login" type="text" autocomplete="username" value="${escapeHtml(localStorage.getItem(LAST_LOGIN_KEY) || "")}" required />
       </label>
       <label>
         <span>Heslo</span>
@@ -817,6 +818,7 @@ async function handleLogin(event) {
     const payload = await response.json();
     loginAccepted = true;
     localStorage.setItem(AUTH_TOKEN_KEY, payload.token);
+    localStorage.setItem(LAST_LOGIN_KEY, String(data.get("login") || ""));
     currentUser = payload.user;
     isolateLocalStatePerUser();
     resetSessionScopedState();
