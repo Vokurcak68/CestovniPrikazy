@@ -1,7 +1,7 @@
 # Uživatelský manuál - Aplikace Cestovní příkazy
 
-**Verze:** 1.0
-**Datum:** 15. 5. 2026
+**Verze:** 1.2
+**Datum:** 27. 5. 2026
 **Organizace:** Oresi United Kitchens
 
 ---
@@ -9,12 +9,19 @@
 ## Obsah
 
 1. [Přehled aplikace](#1-přehled-aplikace)
-2. [Pro zaměstnance](#2-pro-zaměstnance)
-3. [Pro schvalovatele](#3-pro-schvalovatele)
-4. [Pro účetní](#4-pro-účetní)
-5. [Pro administrátory](#5-pro-administrátory)
-6. [Stavy cestovních příkazů](#6-stavy-cestovních-příkazů)
-7. [Často kladené otázky](#7-často-kladené-otázky)
+2. [Začínáme – registrace, přihlášení a profil](#2-začínáme--registrace-přihlášení-a-profil)
+   - [2.1 Registrace nového účtu](#21-registrace-nového-účtu)
+   - [2.2 Přihlášení](#22-přihlášení)
+   - [2.3 Nastavení profilu](#23-nastavení-profilu-první-přihlášení)
+   - [2.4 Synchronizace profilu s Heliosem](#24-synchronizace-profilu-s-heliosem-erp)
+   - [2.5 Přidání vozidla](#25-přidání-vozidla)
+3. [Pro zaměstnance](#3-pro-zaměstnance)
+4. [Pro schvalovatele](#4-pro-schvalovatele)
+5. [Pro účetní](#5-pro-účetní)
+6. [Pro administrátory](#6-pro-administrátory)
+7. [Stavy cestovních příkazů](#7-stavy-cestovních-příkazů)
+8. [Vyhledávání a filtrování](#8-vyhledávání-a-filtrování)
+9. [Často kladené otázky](#9-často-kladené-otázky)
 
 ---
 
@@ -27,17 +34,10 @@ Aplikace Cestovní příkazy je webová aplikace pro správu služebních cest z
 - Vytváření žádostí o vycestování
 - Schvalování žádostí nadřízenými
 - Zakládání cestovních příkazů ze schválených žádostí
-- Vyúčtování nákladů na služební cestu
+- Vyúčtování nákladů na služební cestu (tuzemskou i zahraniční)
 - Export dat do účetního systému Helios
 
-### 1.2 Přihlášení
-
-1. Otevřete aplikaci v prohlížeči
-2. Zadejte své **přihlašovací jméno** (e-mail)
-3. Zadejte **heslo**
-4. Klikněte na **Přihlásit**
-
-### 1.3 Hlavní rozhraní
+### 1.2 Hlavní rozhraní
 
 Po přihlášení uvidíte:
 
@@ -46,13 +46,141 @@ Po přihlášení uvidíte:
 - **Hlavní panel** - detail vybraného příkazu/žádosti
 - **Ikony nápovědy (?)** - klikněte pro zobrazení kontextové nápovědy
 
+### 1.3 Kontextová nápověda
+
+U většiny polí formuláře je ikona **?** (otazník). Kliknutím se zobrazí vysvětlení k danému poli. Nápovědu lze zavřít kliknutím mimo panel nebo na tlačítko zavřít.
+
+### 1.4 Oznámení (notifikace)
+
+Aplikace zobrazuje barevná oznámení (tzv. toast notifikace) v rohu obrazovky:
+- **Zelené** - úspěšná akce
+- **Modré** - informace
+- **Oranžové** - varování
+- **Červené** - chyba
+
+Oznámení zmizí automaticky po 5 sekundách nebo je lze zavřít ručně kliknutím na **×**.
+
 ---
 
-## 2. Pro zaměstnance
+## 2. Začínáme – registrace, přihlášení a profil
+
+### 2.1 Registrace nového účtu
+
+Pokud ještě nemáte přístup do aplikace, musíte si vytvořit účet.
+
+1. Otevřete aplikaci v prohlížeči
+2. Na přihlašovací obrazovce klikněte na **Vytvořit účet**
+3. Vyplňte registrační formulář:
+   - **Jméno** - vaše celé jméno (zobrazuje se ostatním uživatelům)
+   - **E-mail** - bude sloužit jako přihlašovací jméno
+   - **Heslo** - minimálně 8 znaků
+   - **Heslo znovu** - zopakujte heslo pro ověření
+4. Klikněte na **Registrovat**
+
+Po úspěšné registraci:
+- Obdržíte e-mail s ověřovacím odkazem
+- Klikněte na odkaz v e-mailu pro aktivaci účtu
+- Teprve po aktivaci se lze přihlásit
+
+**Upozornění:** Bez kliknutí na ověřovací odkaz nelze účet použít. Zkontrolujte i složku Spam.
+
+**Tip:** Pokud vám administrátor vytvořil účet přímo v systému, registraci přeskočte – přihlaste se e-mailem a heslem, které vám sdělil.
+
+### 2.2 Přihlášení
+
+1. Otevřete aplikaci v prohlížeči
+2. Zadejte svůj **e-mail** (přihlašovací jméno)
+3. Zadejte **heslo**
+4. Klikněte na **Přihlásit**
+
+Pokud zadáte špatné přihlašovací údaje, zobrazí se chybová zpráva. Zkontrolujte e-mail a heslo. Pokud heslo neznáte, kontaktujte administrátora aplikace.
+
+### 2.3 Nastavení profilu (první přihlášení)
+
+Po prvním přihlášení je důležité vyplnit svůj profil. Bez správně vyplněného profilu nelze vytvářet cestovní příkazy.
+
+1. Klikněte na **Profil** v horní liště (ikona osoby)
+2. Vyplňte osobní údaje:
+   - **Jméno** - celé jméno jak se zobrazí na příkazech
+   - **E-mail** - kontaktní e-mail (předvyplněn z registrace)
+   - **Osobní číslo** - evidenční číslo zaměstnance (nutné pro synchronizaci s Heliosem)
+   - **Středisko – kód** - kód organizační jednotky
+   - **Středisko – název** - název organizační jednotky
+   - **Útvar** - název útvaru
+   - **Telefon** - kontaktní telefon
+   - **Pracovní doba od / do** - výchozí pracovní hodiny (používají se pro výpočet stravného)
+   - **Výchozí doprava** - předvyplní se automaticky při vytváření nových úseků trasy
+   - **Bydliště** - adresa bydliště (používá se jako výchozí místo odjezdu)
+
+3. Nastavte **výchozího schvalovatele**:
+   - Ze seznamu vyberte svého přímého nadřízeného
+   - Tento schvalovatel se automaticky předvyplní do každé nové žádosti
+
+4. Klikněte na **Uložit profil**
+
+**Tip:** Všechna pole profilu lze kdykoli změnit. Změny se projeví až v nově vytvořených příkazech, nikoliv v již odeslaných.
+
+### 2.4 Synchronizace profilu s Heliosem (ERP)
+
+Pokud vaše firma používá Helios, lze osobní údaje, středisko a vozidla načíst automaticky.
+
+**Podmínka:** Musí být vyplněno vaše **Osobní číslo** v profilu – podle něj aplikace hledá záznamy v Heliosu.
+
+Postup synchronizace:
+
+1. Přejděte do **Profilu**
+2. Klikněte na **Synchronizace s ERP**
+3. Aplikace načte z Heliosu:
+   - Jméno, osobní číslo, středisko, útvar, adresu
+   - Přidělená vozidla (automaticky přidá do seznamu vozidel)
+   - Příznak schvalovatele (pokud jste v Heliosu vedeni jako schvalovatel, získáte tuto roli)
+4. Po úspěšné synchronizaci se zobrazí zpráva s počtem načtených vozidel
+
+**Možné chyby při synchronizaci:**
+- *"V ERP Helios nebyl nalezen zaměstnanec s tímto osobním číslem"* – zkontrolujte osobní číslo v profilu
+- *"ERP Helios teď nelze načíst"* – dočasný výpadek spojení, zkuste znovu
+
+**Poznámka:** Synchronizace přepíše aktuální údaje profilu daty z Heliosu. Pokud máte v profilu jiné údaje než v Heliosu, budou nahrazeny heliosovými daty.
+
+### 2.5 Přidání vozidla
+
+Pokud jezdíte na služební cesty vlastním vozem, přidejte vozidlo do profilu.
+
+1. V profilu přejděte do sekce **Vozidla**
+2. Klikněte na **+ Přidat vozidlo**
+3. Vyplňte:
+   - **SPZ** - registrační značka
+   - **Značka/model** - např. "Škoda Octavia"
+   - **Objem motoru** - v cm³ (určuje základní km sazbu)
+   - **Druh paliva** - benzín, nafta, CNG, elektro atd.
+   - **Spotřeba** - průměrná spotřeba v l/100km
+   - **Cena paliva** - zvolte **Podle vyhlášky** (automaticky) nebo **Vlastní cena** (zadáte sami)
+4. Klikněte na **Uložit profil**
+
+Vozidla přidaná z Heliosu (přes ERP sync) se zobrazují automaticky.
+
+#### Dokumenty vozidla
+
+K vozidlu lze přiložit doklady (OTP, pojistka, technický průkaz):
+
+1. V detailu vozidla klikněte na **+ Přidat dokument**
+2. Vyberte soubor ze svého počítače
+3. Pojmenujte dokument
+4. Klikněte na **Uložit profil**
+
+Dokumenty lze kdykoli otevřít nebo stáhnout kliknutím na příslušnou ikonu.
+
+### 2.6 Odhlášení
+
+Pro odhlášení klikněte na svou ikonu nebo jméno v horní liště a vyberte **Odhlásit**.
+
+---
+
+## 3. Pro zaměstnance
 
 Jako zaměstnanec můžete vytvářet žádosti o vycestování a po jejich schválení zakládat cestovní příkazy.
 
-### 2.1 Vytvoření žádosti o vycestování
+### 3.1 Vytvoření žádosti o vycestování
 
 #### Krok 1: Přejděte do sekce Žádosti
 
@@ -84,7 +212,7 @@ Jako zaměstnanec můžete vytvářet žádosti o vycestování a po jejich schv
 
 **Tip:** Ikony s otazníkem (?) u jednotlivých polí zobrazí nápovědu k vyplnění.
 
-### 2.2 Založení cestovního příkazu
+### 3.2 Založení cestovního příkazu
 
 Po schválení žádosti můžete založit cestovní příkaz.
 
@@ -121,7 +249,11 @@ Automaticky se předvyplní údaje ze žádosti:
 Pro každý úsek cesty (tam, zpět, případné další):
 
 1. Klikněte na **+ Přidat úsek**
-2. Vyplňte:
+2. Zvolte **typ úseku**:
+   - **Tuzemský** - cesta v ČR, počítá se tuzemské stravné
+   - **Zahraniční** - cesta do zahraničí, počítá se zahraniční stravné v cizí měně
+   - **Soukromý** - soukromá část cesty, nezapočítává se do náhrad
+3. Vyplňte:
    - **Odjezd** - datum a čas odjezdu
    - **Odkud** - místo odjezdu (např. "Březí")
    - **Kam** - místo příjezdu (např. "Praha")
@@ -131,7 +263,11 @@ Pro každý úsek cesty (tam, zpět, případné další):
    - **Doprava** - způsob dopravy (vlastní vozidlo, vlak, atd.)
    - **Km** - počet ujetých kilometrů (pouze pro vlastní vozidlo)
 
-3. Vyplňte náklady (pokud byly):
+4. U **zahraničního úseku** navíc vyplňte:
+   - **Země** - výběrem se automaticky načtou příslušné sazby stravného a kurz
+   - **Výdaje v cizí měně** - jízdné, ubytování, ostatní v měně dané země
+
+5. Vyplňte náklady (pokud byly):
    - **Jízdné** - vstupenky (vlak, autobus, atd.)
    - **Ubytování** - náklady na hotel
    - **Ostatní** - parkovné, dálniční známka, atd.
@@ -139,15 +275,21 @@ Pro každý úsek cesty (tam, zpět, případné další):
 **Automatický výpočet stravného:**
 - Aplikace automaticky vypočítá stravné podle délky úseku
 - Pokud měl zaměstnanec jídlo zdarma, zaškrtněte **Jídlo zdarma**
+- U zahraničních úseků se stravné počítá v cizí měně a přepočítává kurzem na CZK
 
 #### Krok 5: Přiložte doklady
 
 1. Přejděte na záložku **Doklady**
 2. Klikněte na **+ Přidat doklad**
-3. Vyberte soubor z počítače (PDF, JPG, PNG)
+3. Vyberte soubor z počítače (PDF, JPG, PNG, max. 10 MB)
 4. Zadejte:
+   - **Druh dokladu** - účtenka, faktura, jízdenka, jiný
    - **Popis** - co je na dokladu (např. "Tankování")
-   - **Částka** - výše nákladů
+   - **Částka** - výše nákladů (u zahraničních dokladů i v cizí měně)
+5. Pro **zobrazení dokladu** klikněte na ikonu oka (náhled) nebo stáhněte kliknutím na ikonu stahování
+6. Pro **odebrání dokladu** klikněte na ikonu koše
+
+**Tip:** Doklady se ukládají na server - jsou dostupné i z jiného počítače.
 
 #### Krok 6: Zkontrolujte výpočet
 
@@ -159,6 +301,7 @@ Pro každý úsek cesty (tam, zpět, případné další):
    - **Jízdné celkem**
    - **Ubytování celkem**
    - **Celkem k výplatě**
+3. U zahraničních cest uvidíte souhrn i pro jednotlivé záložky měn (EUR, USD, atd.) s přepočtem na CZK
 
 #### Krok 7: Odešlete ke schválení
 
@@ -166,7 +309,30 @@ Pro každý úsek cesty (tam, zpět, případné další):
 2. Cestovní příkaz je odeslán schvalovateli
 3. Obdržíte e-mail s potvrzením
 
-### 2.3 Duplikace cestovního příkazu
+### 3.3 Zahraniční cestovní příkazy
+
+Zahraniční cestovní příkaz se liší od tuzemského tím, že obsahuje výdaje v cizí měně a zahraniční stravné.
+
+#### Stravné v zahraničí
+
+- Stravné se počítá v měně příslušné země (EUR, USD, atd.)
+- Sazby stravného jsou načteny automaticky z Heliosu podle zvolené země a data
+- Výpočet probíhá ve stejných pásmech jako tuzemský (5-12h, 12-18h, nad 18h), ale v cizí měně
+- Celková částka je na záložce **Souhrn** přepočtena kurzem na CZK
+
+#### Kurzy měn
+
+- Aplikace automaticky načítá aktuální kurzy z Heliosu
+- Kurz se načítá vždy k datu konkrétního úseku cesty
+- Kurzy jsou zobrazeny v souhrnu příkazu
+
+#### Výdaje v cizí měně
+
+- Jízdné, ubytování a ostatní výdaje lze zadat přímo v cizí měně
+- Při přidání dokladu lze uvést částku v cizí měně - aplikace ji přepočítá na CZK
+- V souhrnu jsou uvedeny jak částky v cizí měně, tak přepočet na CZK
+
+### 3.4 Duplikace cestovního příkazu
 
 Pokud jedete na podobnou cestu opakovaně, můžete zkopírovat existující příkaz.
 
@@ -178,7 +344,7 @@ Pokud jedete na podobnou cestu opakovaně, můžete zkopírovat existující př
 
 **Poznámka:** Duplikace vytvoří nový příkaz s předvyplněnými údaji, ale neuloží se automaticky.
 
-### 2.4 Tisk nebo uložení do PDF
+### 3.5 Tisk nebo uložení do PDF
 
 1. Otevřete cestovní příkaz
 2. Klikněte na **Tisk / PDF** v horní liště
@@ -190,17 +356,17 @@ Pokud jedete na podobnou cestu opakovaně, můžete zkopírovat existující př
 
 ---
 
-## 3. Pro schvalovatele
+## 4. Pro schvalovatele
 
 Jako schvalovatel schvalujete žádosti o vycestování a cestovní příkazy podřízených.
 
-### 3.1 Přístup k dashboardu schvalování
+### 4.1 Přístup k dashboardu schvalování
 
 1. Klikněte na **Schvalování** v horní liště
 2. Zobrazí se seznam žádostí a příkazů čekajících na schválení
 3. Červené číslo u tlačítka "Schvalování" ukazuje počet čekajících položek
 
-### 3.2 Schvalování žádostí o vycestování
+### 4.2 Schvalování žádostí o vycestování
 
 #### Krok 1: Otevřete žádost
 
@@ -227,7 +393,7 @@ Zkontrolujte:
 2. Zadejte důvod zamítnutí
 3. Zaměstnanec obdrží e-mail s důvodem
 
-### 3.3 Schvalování cestovních příkazů
+### 4.3 Schvalování cestovních příkazů
 
 #### Krok 1: Otevřete cestovní příkaz
 
@@ -238,9 +404,9 @@ Zkontrolujte:
 
 Zkontrolujte:
 - **Základní údaje** - datum, cíl, účel cesty
-- **Trasa** - jednotlivé úseky a km
-- **Náklady** - stravné, jízdné, ubytování
-- **Doklady** - jsou přiloženy všechny potřebné doklady?
+- **Trasa** - jednotlivé úseky a km (včetně zahraničních úseků a použité měny)
+- **Náklady** - stravné, jízdné, ubytování (v CZK i v cizích měnách)
+- **Doklady** - jsou přiloženy všechny potřebné doklady? Kliknutím na doklad jej zobrazíte
 - **Výpočet** - je celková částka v pořádku?
 
 #### Krok 3: Schvalte, zamítněte nebo vraťte
@@ -260,7 +426,17 @@ Zkontrolujte:
 2. Zadejte co je třeba opravit
 3. Příkaz se vrátí zaměstnanci ve stavu **Vráceno k doplnění**
 
-### 3.4 E-mailová notifikace
+### 4.4 Fáze schvalování
+
+Cestovní příkaz prochází těmito fázemi (záleží na konfiguraci firmy):
+
+1. **Manažer** - přímý nadřízený zaměstnance
+2. **Účetní** - kontrola formálních náležitostí (pokud je v systému)
+3. **Finální schvalovatel** - konečné schválení
+
+Jako schvalovatel vidíte vždy jen příkazy ve své fázi. Po vašem schválení postupuje příkaz do další fáze.
+
+### 4.5 E-mailová notifikace
 
 Obdržíte e-mail když:
 - Zaměstnanec odešle žádost ke schválení
@@ -269,16 +445,16 @@ Obdržíte e-mail když:
 
 ---
 
-## 4. Pro účetní
+## 5. Pro účetní
 
 Jako účetní kontrolujete schválené cestovní příkazy před exportem do Heliosu.
 
-### 4.1 Přístup k dashboardu účetní
+### 5.1 Přístup k dashboardu účetní
 
 1. Klikněte na **Schvalování** v horní liště
 2. Zobrazí se příkazy čekající na kontrolu účetní
 
-### 4.2 Kontrola cestovního příkazu
+### 5.2 Kontrola cestovního příkazu
 
 #### Krok 1: Otevřete příkaz ke kontrole
 
@@ -288,12 +464,13 @@ Jako účetní kontrolujete schválené cestovní příkazy před exportem do He
 #### Krok 2: Zkontrolujte formální náležitosti
 
 Zkontrolujte:
-- **Doklady** - jsou přiloženy všechny účtenky?
+- **Doklady** - jsou přiloženy všechny účtenky? Kliknutím doklad otevřete nebo stáhněte
 - **Částky** - souhlasí částky na dokladech s vyúčtováním?
-- **Výpočet stravného** - je správně vypočteno?
+- **Výpočet stravného** - je správně vypočteno (včetně zahraničního)?
 - **Výpočet km náhrady** - je správně vypočteno?
 - **Středisko** - je správně přiřazeno?
 - **Účel cesty** - je jasně uveden pro účely Helios?
+- **Kurzy měn** - u zahraničních cest zkontrolujte použité kurzy
 
 #### Krok 3: Schvalte nebo vraťte
 
@@ -307,7 +484,7 @@ Zkontrolujte:
 2. Zadejte co je třeba opravit
 3. Příkaz se vrátí zaměstnanci
 
-### 4.3 Export do Heliosu
+### 5.3 Export do Heliosu
 
 #### Krok 1: Najděte příkazy k exportu
 
@@ -335,7 +512,27 @@ Zkontrolujte:
 
 **Poznámka:** Export je jednosměrný - změny v Heliosu se nepromítnou zpět do aplikace.
 
-### 4.4 Úprava cizích příkazů
+#### Krok 4: Reset importu (opakování exportu)
+
+Pokud byl export neúspěšný nebo je třeba příkaz opakovaně exportovat:
+
+1. Otevřete naimportovaný příkaz
+2. Klikněte na **Reset importu**
+3. Příkaz se vrátí do stavu **Připraveno k exportu**
+4. Export lze provést znovu
+
+**Upozornění:** Reset importu smaže vazbu na původní doklad v Heliosu. Zkontrolujte stav v Heliosu před resetem.
+
+### 5.4 Náhled příkazu pro Helios
+
+Před exportem si můžete prohlédnout jak bude příkaz vypadat v Heliosu:
+
+1. Otevřete příkaz
+2. Klikněte na **Náhled Helios** (nebo použijte URL náhledu)
+3. Zobrazí se HTML náhled cestovního příkazu ve formátu pro Helios
+4. Náhled obsahuje i přiložené doklady
+
+### 5.5 Úprava cizích příkazů
 
 Účetní může upravovat příkazy jiných zaměstnanců:
 
@@ -349,11 +546,11 @@ Zkontrolujte:
 
 ---
 
-## 5. Pro administrátory
+## 6. Pro administrátory
 
 Jako administrátor spravujete uživatele a nastavení aplikace.
 
-### 5.1 Správa uživatelů
+### 6.1 Správa uživatelů
 
 #### Krok 1: Přejděte do správy uživatelů
 
@@ -399,9 +596,9 @@ Jako administrátor spravujete uživatele a nastavení aplikace.
 
 **Tip:** Nemazejte uživatele - raději je deaktivujte. Zachováte historii jejich příkazů.
 
-### 5.2 Správa vozidel
+### 6.2 Správa vozidel
 
-Administrátor může spravovat firemní vozidla:
+Administrátor může spravovat vozidla všech uživatelů:
 
 1. V profilu uživatele přejděte na **Vozidla**
 2. Přidejte nebo upravte vozidlo:
@@ -412,14 +609,14 @@ Administrátor může spravovat firemní vozidla:
    - **Spotřeba** - průměrná spotřeba v l/100km
    - **Cena paliva** - podle vyhlášky nebo vlastní
 
-### 5.3 Správa sazeb
+### 6.3 Správa sazeb
 
 #### Základní sazby (pro celou firmu)
 
 1. Přejděte do **Nastavení** (ikona ozubeného kola)
 2. Upravte:
    - **Tuzemské stravné** - základní sazba na den
-   - **Zahraniční stravné** - podle zemí
+   - **Zahraniční stravné** - podle zemí (načítá se z Heliosu)
    - **Základní km sazba** - náhrada za km pro osobní vozy
    - **Ceny pohonných hmot** - podle vyhlášky MF
 
@@ -427,11 +624,43 @@ Administrátor může spravovat firemní vozidla:
 
 **Poznámka:** Změna sazeb neovlivní již vytvořené příkazy - ty si uchovávají původní sazby.
 
+### 6.4 Monitor sazeb
+
+Aplikace automaticky sleduje platnost zákonných sazeb (stravné, km náhrady, ceny paliv). Pokud jsou sazby zastaralé nebo se změní vyhláška, zobrazí se upozornění.
+
+1. Přejděte do **Nastavení** → **Monitor sazeb**
+2. Uvidíte stav kontroly sazeb:
+   - Datum poslední kontroly
+   - Zda jsou sazby aktuální
+   - Případné změny oproti předchozím sazbám
+3. Pro ruční spuštění kontroly klikněte na **Zkontrolovat sazby**
+
+**Poznámka:** Automatická kontrola sazeb probíhá při každém načtení aplikace.
+
+### 6.5 Synchronizace s ERP (Helios)
+
+Administrátor může spustit synchronizaci dat z Heliosu:
+
+#### Synchronizace uživatelů a vozidel
+
+1. Přejděte do **Nastavení** → **ERP synchronizace**
+2. Klikněte na **Synchronizovat z Heliosu**
+3. Aplikace načte:
+   - Aktuální údaje zaměstnanců (jméno, středisko, osobní číslo)
+   - Přidělená vozidla
+   - Role a oprávnění
+
+#### Synchronizace sazeb a kurzů
+
+- Sazby zahraničního stravného jsou načítány automaticky z Heliosu při každém použití
+- Kurzy měn se načítají vždy k datu úseku zahraniční cesty
+- Ruční obnovení: **Nastavení** → **Monitor sazeb** → **Zkontrolovat sazby**
+
 ---
 
-## 6. Stavy cestovních příkazů
+## 7. Stavy cestovních příkazů
 
-### 6.1 Životní cyklus žádosti
+### 7.1 Životní cyklus žádosti
 
 ```
 Rozpracováno → Ke schválení → Schváleno/Zamítnuto
@@ -442,7 +671,7 @@ Rozpracováno → Ke schválení → Schváleno/Zamítnuto
 **Schváleno** - žádost byla schválena, lze založit cestovní příkaz
 **Zamítnuto** - žádost byla zamítnuta
 
-### 6.2 Životní cyklus cestovního příkazu
+### 7.2 Životní cyklus cestovního příkazu
 
 ```
 Rozpracováno → Ke schválení → [Kontrola účetní] → [Finální schválení] → Schváleno → Naimportováno → Uzavřeno
@@ -469,7 +698,7 @@ Rozpracováno → Ke schválení → [Kontrola účetní] → [Finální schvál
 
 **Zamítnuto** - příkaz byl zamítnut schvalovatelem
 
-### 6.3 Barevné označení stavů
+### 7.3 Barevné označení stavů
 
 - 🟡 **Žlutá** - Rozpracováno (draft)
 - 🔵 **Modrá** - Ke schválení (submitted)
@@ -481,9 +710,61 @@ Rozpracováno → Ke schválení → [Kontrola účetní] → [Finální schvál
 
 ---
 
-## 7. Často kladené otázky
+## 8. Vyhledávání a filtrování
 
-### 7.1 Obecné otázky
+### 8.1 Vyhledávání v seznamu cestovních příkazů
+
+V levém panelu se seznamem příkazů je dostupné vyhledávání:
+
+1. Klikněte do pole **Hledat...**
+2. Zadejte hledaný text - prohledávají se:
+   - Číslo příkazu
+   - Jméno zaměstnance
+   - Účel cesty
+   - Cíl cesty
+   - Středisko
+
+Vyhledávání pracuje bez ohledu na velikost písmen a diakritiku.
+
+### 8.2 Filtrování podle stavu
+
+1. Nad seznamem příkazů vyberte filtr **Stav**
+2. Zvolte stav:
+   - **Vše** - zobrazí všechny příkazy
+   - **Rozpracováno**
+   - **Ke schválení**
+   - **Vráceno k doplnění**
+   - **Schváleno**
+   - **Naimportováno**
+   - **Uzavřeno**
+   - **Zamítnuto**
+
+### 8.3 Řazení
+
+Příkazy jsou automaticky řazeny od nejnovějšího. Schvalovací dashboard zobrazuje maximálně 50 čekajících položek.
+
+---
+
+## 9. Často kladené otázky
+
+### 9.1 Registrace a přihlášení
+
+**Q: Jak se zaregistruji?**
+A: Na přihlašovací obrazovce klikněte na **Vytvořit účet**, vyplňte jméno, e-mail a heslo (min. 8 znaků) a potvrďte heslo. Po odeslání formuláře obdržíte ověřovací e-mail.
+
+**Q: Nedostal jsem ověřovací e-mail, co mám dělat?**
+A: Zkontrolujte složku **Spam / Nevyžádaná pošta**. Pokud e-mail není ani tam, kontaktujte administrátora – ten může účet aktivovat ručně.
+
+**Q: Ověřovací odkaz mi nefunguje (vypršel).**
+A: Ověřovací odkaz má omezenou platnost 24 hodin. Pokud vypršel, kontaktujte administrátora, který vám zašle nový nebo účet aktivuje přímo.
+
+**Q: Zapomněl jsem heslo.**
+A: Kontaktujte administrátora aplikace – ten vám nastaví nové heslo.
+
+**Q: Dostanu účet automaticky nebo se musím registrovat?**
+A: Záleží na nastavení firmy. Administrátor může účet vytvořit přímo, v takovém případě vám sdělí přihlašovací údaje a registraci přeskočte. Pokud účet nemáte, použijte tlačítko **Vytvořit účet** na přihlašovací obrazovce.
+
+### 9.3 Obecné otázky
 
 **Q: Mohu vytvořit cestovní příkaz bez schválené žádosti?**
 A: Ne. Cestovní příkaz lze vytvořit pouze ze schválené žádosti o vycestování. Nejdřív musíte vytvořit a nechat schválit žádost.
@@ -495,15 +776,21 @@ A: Ne. Po odeslání ke schválení nemůžete příkaz upravovat. Pokud je tře
 A: Záleží na schvalovateli. Ten obdrží e-mail s notifikací. Průměrně 1-2 dny.
 
 **Q: Kam se ukládají data?**
-A: Data se ukládají lokálně v prohlížeči (localStorage) a synchronizují se se serverem. Nezapomeňte odeslat příkaz ke schválení, aby se uložil na server.
+A: Data se ukládají na serveru. Jsou dostupná z jakéhokoli počítače po přihlášení.
 
-### 7.2 Výpočet náhrad
+**Q: Jak poznám v jaké fázi schvalování je můj příkaz?**
+A: V detailu příkazu je zobrazen aktuální stav a fáze schvalování. Při každé změně fáze obdržíte e-mail.
+
+### 9.4 Výpočet náhrad
 
 **Q: Jak se počítá stravné?**
 A: Stravné se počítá automaticky podle délky úseku cesty:
 - 5-12 hodin: částečné stravné (1/3 denní sazby)
 - 12-18 hodin: zvýšené stravné (2/3 denní sazby)
 - Nad 18 hodin: plné stravné (100% denní sazby)
+
+**Q: Jak se počítá zahraniční stravné?**
+A: Zahraniční stravné se počítá ve stejných pásmech jako tuzemské, ale v měně příslušné země. Sazby jsou přebírány z Heliosu a jsou specifické pro každou zemi. Výsledná částka se přepočítá na CZK aktuálním kurzem.
 
 **Q: Co když mi zaměstnavatel poskytl jídlo zdarma?**
 A: Zaškrtněte "Jídlo zdarma" u příslušného úseku. Stravné se automaticky sníží.
@@ -516,7 +803,10 @@ A: Náhrada se skládá ze dvou částí:
 **Q: Můžu si zadat vlastní cenu paliva?**
 A: Ano, ve vozidlu můžete změnit režim z "Podle vyhlášky" na "Vlastní cena" a zadat aktuální cenu za kterou jste tankovali.
 
-### 7.3 Doklady
+**Q: Jaký kurz se použije pro přepočet zahraničních výdajů?**
+A: Kurz se načítá z Heliosu vždy k datu příslušného úseku cesty.
+
+### 9.5 Doklady
 
 **Q: Jaké doklady musím přiložit?**
 A: Všechny doklady prokazující náklady:
@@ -532,7 +822,24 @@ A: PDF, JPG, PNG. Maximální velikost 10 MB na soubor.
 **Q: Co když nemám účtenku?**
 A: Pokud nemáte doklad, napište do poznámky důvod. Schvalovatel rozhodne zda náklad uzná.
 
-### 7.4 Technické problémy
+**Q: Mohu doklad smazat po odeslání příkazu?**
+A: Ne, po odeslání ke schválení nelze doklady mazat. Požádejte schvalovatele o vrácení k doplnění.
+
+**Q: Jak zobrazím přiložený doklad?**
+A: V záložce **Doklady** klikněte na ikonu oka (náhled) pro zobrazení přímo v aplikaci, nebo na ikonu stahování pro uložení souboru.
+
+### 9.6 Zahraniční cesty
+
+**Q: Jak nastavím zahraniční úsek trasy?**
+A: Při přidávání úseku trasy zvolte typ **Zahraniční** a vyberte příslušnou zemi. Aplikace automaticky načte sazby stravného a kurz měny.
+
+**Q: Co je soukromý úsek?**
+A: Soukromý úsek označuje část cesty, která není pracovní (např. návštěva rodiny v rámci pracovní cesty). Za soukromý úsek se neposkytují žádné náhrady.
+
+**Q: Kde vidím přepočet zahraničních výdajů na CZK?**
+A: V záložce **Souhrn** je přehled výdajů v CZK. U příkazů s zahraničními úseky jsou navíc zobrazeny souhrny pro jednotlivé měny (EUR, USD, atd.).
+
+### 9.7 Technické problémy
 
 **Q: Aplikace mi nefunguje, co mám dělat?**
 A: Zkuste:
@@ -542,10 +849,7 @@ A: Zkuste:
 4. Kontaktovat IT podporu
 
 **Q: Ztratil jsem rozpracovaný příkaz, kde ho najdu?**
-A: Příkaz se ukládá automaticky v prohlížeči. Zkontrolujte:
-1. Seznam příkazů - je tam ve stavu "Rozpracováno"
-2. Pokud jste přihlášen na jiném počítači/prohlížeči, data tam nejsou (ukládá se lokálně)
-3. Pokud jste vymazal cache, data jsou ztracena
+A: Data se ukládají na serveru. Příkaz najdete v seznamu příkazů ve stavu "Rozpracováno" na jakémkoli počítači po přihlášení.
 
 **Q: Nemohu se přihlásit, co mám dělat?**
 A: Zkontrolujte:
@@ -553,10 +857,13 @@ A: Zkontrolujte:
 2. Kontaktujte administrátora - možná je účet deaktivovaný
 3. Zkuste reset hesla (pokud je funkce dostupná)
 
-### 7.5 Nápověda v aplikaci
+**Q: Export do Heliosu selhal, co mám dělat?**
+A: Kontaktujte účetní nebo administrátora. Ti mohou provést reset importu a export zopakovat.
+
+### 9.8 Nápověda v aplikaci
 
 **Q: Kde najdu nápovědu přímo v aplikaci?**
-A: U většiny polí je ikona **?** (otazník). Klikněte na ni a zobrazí se kontextová nápověda.
+A: U většiny polí je ikona **?** (otazník). Klikněte na ni a zobrazí se kontextová nápověda pro dané pole.
 
 ---
 
@@ -578,4 +885,4 @@ Web: www.zynaptec.cz
 
 **Konec manuálu**
 
-_Verze 1.0 | © 2026 Oresi United Kitchens | Vytvořil: Zynaptec_
+_Verze 1.2 | © 2026 Oresi United Kitchens | Vytvořil: Zynaptec_
