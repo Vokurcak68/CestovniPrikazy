@@ -7548,13 +7548,17 @@ def static_files(path):
 
 
 if __name__ == "__main__":
-    # Migrace: přidá nové sloupce pro jednotlivá jídla zdarma (pokud ještě neexistují)
-    run_psql_json("""
-        ALTER TABLE travel.travel_route_line
-          ADD COLUMN IF NOT EXISTS free_meal_breakfast BOOLEAN NOT NULL DEFAULT FALSE,
-          ADD COLUMN IF NOT EXISTS free_meal_lunch     BOOLEAN NOT NULL DEFAULT FALSE,
-          ADD COLUMN IF NOT EXISTS free_meal_dinner    BOOLEAN NOT NULL DEFAULT FALSE;
-    """)
+    # Migrace: přidá nové sloupce pro jednotlivá jídla zdarma (pokud ještě neexistují).
+    # Pokud aplikační uživatel nemá DDL oprávnění, migrace se přeskočí — spusť ručně jako postgres.
+    try:
+        run_psql_json("""
+            ALTER TABLE travel.travel_route_line
+              ADD COLUMN IF NOT EXISTS free_meal_breakfast BOOLEAN NOT NULL DEFAULT FALSE,
+              ADD COLUMN IF NOT EXISTS free_meal_lunch     BOOLEAN NOT NULL DEFAULT FALSE,
+              ADD COLUMN IF NOT EXISTS free_meal_dinner    BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
+    except Exception as exc:
+        print(f"[startup] Migrace přeskočena (spusť jako postgres nebo ručně): {exc}")
     app.run(
         host=APP_HOST,
         port=APP_PORT,
