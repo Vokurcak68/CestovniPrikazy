@@ -156,7 +156,6 @@ const els = {
   search: document.getElementById("searchInput"),
   statusFilter: document.getElementById("statusFilter"),
   printBtn: document.getElementById("printBtn"),
-  exportBtn: document.getElementById("exportBtn"),
   ordersMode: document.getElementById("ordersModeBtn"),
   requestsMode: document.getElementById("requestsModeBtn"),
   approvalsMode: document.getElementById("approvalsModeBtn"),
@@ -222,8 +221,7 @@ async function startApp() {
       window.print();
     });
 
-    els.exportBtn.addEventListener("click", exportBackup);
-    els.logoutBtn.addEventListener("click", logout);
+els.logoutBtn.addEventListener("click", logout);
     els.ordersMode.addEventListener("click", () => setMode("orders"));
     els.requestsMode?.addEventListener("click", () => setMode("requests"));
     els.approvalsMode.addEventListener("click", () => setMode("approvals"));

@@ -1917,7 +1917,7 @@ textarea:focus {
   }
 
   #printBtn,
-  #exportBtn {
+  a.icon-text-btn[href="/MANUAL.md"] {
     display: none;
   }
 
