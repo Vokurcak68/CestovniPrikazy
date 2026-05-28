@@ -1917,7 +1917,7 @@ textarea:focus {
   }
 
   #printBtn,
-  a.icon-text-btn[href="/MANUAL.md"] {
+  a.icon-text-btn[href="/.retype/manual/index.html"] {
     display: none;
   }
 
