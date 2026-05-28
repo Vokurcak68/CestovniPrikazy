@@ -61,6 +61,7 @@ DECLARE @TotalAmountPredZao decimal(19, 6) = 0;
 DECLARE @TotalAmountRounded decimal(19, 6) = 0;
 DECLARE @MenaPrepocet nvarchar(3) = N'CZK';
 DECLARE @KurzPrepocet decimal(19, 6) = 1;
+DECLARE @MaJidloZdarma bit = 0;
 DECLARE @TotalAmountZak decimal(19, 6) = 0;
 DECLARE @MealAmountZak decimal(19, 6) = 0;
 DECLARE @CallbackBody nvarchar(max) = NULL;
@@ -171,6 +172,19 @@ SET @MealAmountZak = CASE
   THEN ROUND(@MealAmount / @KurzPrepocet, 2)
   ELSE @MealAmount
 END;
+
+-- Zjistit, zda má cestovní příkaz alespoň jedno jídlo zdarma (pro nastavení Kalendar = 2)
+IF EXISTS (
+  SELECT 1
+  FROM OPENJSON(@Payload, '$.routeLines')
+  WITH (
+    Snidane bit '$.helios.values.Snidane',
+    Obed    bit '$.helios.values.Obed',
+    Vecere  bit '$.helios.values.Vecere'
+  )
+  WHERE Snidane = 1 OR Obed = 1 OR Vecere = 1
+)
+  SET @MaJidloZdarma = 1;
 
 IF EXISTS (SELECT 1 FROM dbo.TabICestak WHERE CisDok = @HeliosCisDok)
   THROW 52002, 'Cestovni prikaz s timto CisDok uz v dbo.TabICestak existuje.', 1;
@@ -431,7 +445,8 @@ BEGIN TRY
     FixKurz,
     JeNovaVetaEditor,
     CestakJakHledatKurz,
-    ZpusobKurzu
+    ZpusobKurzu,
+    Kalendar
   )
   VALUES (
     @EmployeeNo,
@@ -465,7 +480,7 @@ BEGIN TRY
     COALESCE(TRY_CONVERT(decimal(19, 6), JSON_VALUE(@Payload, '$.helios.headerValues.KMZahr')), 0),
     COALESCE(NULLIF(JSON_VALUE(@Payload, '$.helios.headerValues.TypCesty'), N''), N'T'),
     @VozidloId,
-    1,
+    CASE WHEN @MenaPrepocet <> N'CZK' THEN 0 ELSE 1 END,  -- 0 = zahranični, 1 = tuzemský
     @Stredisko,
     CASE WHEN @MenaPrepocet <> N'CZK' THEN 16 ELSE 15 END,  -- 16 = zahranični, 15 = tuzemský
     N'CestovniPrikazy',
@@ -475,7 +490,8 @@ BEGIN TRY
     0,
     0,
     1,
-    0
+    0,
+    CASE WHEN @MaJidloZdarma = 1 THEN 2 ELSE 0 END  -- 2 = jídlo zdarma, 0 = bez jídla zdarma
   );
 
   SET @CestakId = SCOPE_IDENTITY();
@@ -560,10 +576,10 @@ BEGIN TRY
     0,
     @CisloZakazky,
     @Stredisko,
-    0,
-    0,
-    0,
-    CASE WHEN COALESCE(expanded.FreeMeals, 0) = 0 THEN 1 ELSE 0 END
+    COALESCE(expanded.Snidane, 0),
+    COALESCE(expanded.Obed, 0),
+    COALESCE(expanded.Vecere, 0),
+    CASE WHEN COALESCE(expanded.Snidane, 0) = 0 AND COALESCE(expanded.Obed, 0) = 0 AND COALESCE(expanded.Vecere, 0) = 0 THEN 1 ELSE 0 END
   FROM (
     -- Služební jízdy z aplikace
     SELECT
@@ -581,7 +597,10 @@ BEGIN TRY
       CelkemKC,
       Hod1,
       ProcStrav,
-      FreeMeals
+      FreeMeals,
+      Snidane,
+      Obed,
+      Vecere
     FROM OPENJSON(@Payload, '$.routeLines')
     WITH (
       SequenceNo int '$.sequenceNo',
@@ -598,7 +617,10 @@ BEGIN TRY
       CelkemKC decimal(19, 6) '$.mealAmount',
       Hod1 decimal(19, 6) '$.calculatedHours',
       ProcStrav decimal(19, 6) '$.helios.values.ProcStrav',
-      FreeMeals int '$.freeMeals'
+      FreeMeals int '$.freeMeals',
+      Snidane bit '$.helios.values.Snidane',
+      Obed    bit '$.helios.values.Obed',
+      Vecere  bit '$.helios.values.Vecere'
     )
     CROSS APPLY (
       SELECT
@@ -626,7 +648,10 @@ BEGIN TRY
       0 AS CelkemKC,
       0 AS Hod1,
       0 AS ProcStrav,
-      0 AS FreeMeals
+      0 AS FreeMeals,
+      CAST(0 AS bit) AS Snidane,
+      CAST(0 AS bit) AS Obed,
+      CAST(0 AS bit) AS Vecere
     FROM OPENJSON(@Payload, '$.routeLines')
     WITH (
       SequenceNo int '$.sequenceNo',

@@ -2379,3 +2379,38 @@ textarea:focus {
 .flatpickr-ok-btn:hover {
   background: linear-gradient(135deg, #2569e6, #00a6c9);
 }
+
+/* Jídla zdarma – skupina zaškrtávacích políček v úsecích cesty */
+.free-meals-fieldset {
+  border: 1px solid var(--border, #dde1e9);
+  border-radius: var(--radius, 6px);
+  padding: 6px 10px 8px;
+  margin: 0;
+  min-width: 0;
+}
+
+.free-meals-fieldset legend {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted, #6b7280);
+  padding: 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  margin-right: 12px;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent, #0ea5e9);
+}

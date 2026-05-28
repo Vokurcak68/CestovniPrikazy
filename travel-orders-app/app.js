@@ -2679,7 +2679,9 @@ function hydrateOrderFromServerSnapshot(order, serverOrder) {
       fare: Number(line.fare || 0),
       lodging: Number(line.lodging || 0),
       other: Number(line.other || 0),
-      freeMeals: Number(line.freeMeals || 0),
+      freeMealBreakfast: Boolean(line.freeMealBreakfast || false),
+      freeMealLunch: Boolean(line.freeMealLunch || false),
+      freeMealDinner: Boolean(line.freeMealDinner || false),
     }));
     if (JSON.stringify(nextLines) !== JSON.stringify(order.routeLines || [])) {
       order.routeLines = nextLines;
@@ -3614,7 +3616,12 @@ function routeCard(line, lineCalc, index, totalLines) {
         ${lineField("Jízdné", "fare", line.fare, "number", "0.01", "Náklady na dopravu (vlak, letadlo, taxi, atd.)")}
         ${lineField("Nocležné", "lodging", line.lodging, "number", "0.01", "Náklady na ubytování")}
         ${lineField("Vedlejší výdaje", "other", line.other, "number", "0.01", "Ostatní výdaje (parkování, telefon, atd.)")}
-        ${lineField("Jídla zdarma", "freeMeals", line.freeMeals, "number", "1", "Počet jídel poskytnutých zdarma (snižuje stravné)")}
+        <fieldset class="free-meals-fieldset">
+          <legend>Jídla zdarma</legend>
+          <label class="checkbox-label"><input type="checkbox" data-line-field="freeMealBreakfast" ${line.freeMealBreakfast ? "checked" : ""} /> Snídaně</label>
+          <label class="checkbox-label"><input type="checkbox" data-line-field="freeMealLunch"     ${line.freeMealLunch     ? "checked" : ""} /> Oběd</label>
+          <label class="checkbox-label"><input type="checkbox" data-line-field="freeMealDinner"    ${line.freeMealDinner    ? "checked" : ""} /> Večeře</label>
+        </fieldset>
         ${foreignLineInfo(line, lineCalc)}
       </div>
       ${lastLineActions}
@@ -4810,7 +4817,9 @@ function routeLineHasBusinessContent(line) {
     number(line.fare) ||
     number(line.lodging) ||
     number(line.other) ||
-    number(line.freeMeals)
+    line.freeMealBreakfast ||
+    line.freeMealLunch ||
+    line.freeMealDinner
   );
 }
 
@@ -5562,8 +5571,8 @@ function calculateLine(order, line) {
   const meal = isPrivateSegment
     ? { base: 0, reduction: 0, amount: 0, currency: "CZK", exchangeRate: 1, foreignAmount: 0 }
     : isForeignSegment
-      ? foreignMealAllowance(line, number(line.freeMeals))
-      : mealAllowance(hours, number(line.freeMeals));
+      ? foreignMealAllowance(line, line.freeMealBreakfast, line.freeMealLunch, line.freeMealDinner)
+      : mealAllowance(hours, line.freeMealBreakfast, line.freeMealLunch, line.freeMealDinner);
   const basicKmComp = !isPrivateSegment && line.transport === "private_car" ? km * getBasicKmRate(order) : 0;
   const fuelComp = !isPrivateSegment && line.transport === "private_car" ? km * getFuelKmRate(order) : 0;
   const privateComp = basicKmComp + fuelComp;
@@ -5589,7 +5598,7 @@ function calculateLine(order, line) {
   };
 }
 
-function foreignMealAllowance(line, freeMeals) {
+function foreignMealAllowance(line, breakfast, lunch, dinner) {
   const mealRate = number(line.foreignMealRate); // základní sazba (plná)
   const exchangeRate = positiveNumber(line.foreignExchangeRate, 1);
   const currency = normalizeCurrencyCode(line.foreignCurrencyCode || "EUR");
@@ -5612,7 +5621,7 @@ function foreignMealAllowance(line, freeMeals) {
   }
 
   const base = Math.round(mealRate * bandFraction * 100) / 100;
-  const meals = Math.max(0, Math.min(3, Math.round(freeMeals || 0)));
+  const meals = (breakfast ? 1 : 0) + (lunch ? 1 : 0) + (dinner ? 1 : 0);
   const reduction = Math.min(base, Math.round(base * reductionPct * meals * 100) / 100);
   const foreignAmount = Math.max(0, Math.round((base - reduction) * 100) / 100);
 
@@ -5629,10 +5638,10 @@ function foreignMealAllowance(line, freeMeals) {
   };
 }
 
-function mealAllowance(hours, freeMeals) {
+function mealAllowance(hours, breakfast, lunch, dinner) {
   const band = getMealBand(hours);
   if (!band) return { base: 0, reduction: 0, amount: 0 };
-  const meals = Math.max(0, Math.min(3, Math.round(freeMeals || 0)));
+  const meals = (breakfast ? 1 : 0) + (lunch ? 1 : 0) + (dinner ? 1 : 0);
   const reduction = Math.min(band.amount, band.amount * (band.reductionPct / 100) * meals);
   return {
     base: band.amount,
@@ -5897,7 +5906,9 @@ function createBlankLine(transport = null) {
     fareForeign: 0,
     lodgingForeign: 0,
     otherForeign: 0,
-    freeMeals: 0,
+    freeMealBreakfast: false,
+    freeMealLunch: false,
+    freeMealDinner: false,
   };
 }
 
@@ -5992,6 +6003,7 @@ function setByPath(target, path, value) {
 }
 
 function parseInputValue(input) {
+  if (input.type === "checkbox") return input.checked;
   if (input.type === "number") return number(input.value);
   return input.value;
 }
