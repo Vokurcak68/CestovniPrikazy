@@ -7539,6 +7539,11 @@ def index():
     return send_file(FRONTEND_DIR / "index.html")
 
 
+@app.get("/.retype/<path:path>")
+def retype_files(path):
+    return send_from_directory(ROOT / ".retype", path)
+
+
 @app.get("/<path:path>")
 def static_files(path):
     target = FRONTEND_DIR / path
